@@ -218,3 +218,8 @@ data/*.db
 
 # Streamlit secrets
 .streamlit/secrets.toml
+
+data/*.db
+logs/raw/
+logs/processed/
+.streamlit/secrets.toml

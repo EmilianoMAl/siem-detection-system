@@ -7,6 +7,49 @@ import json
 from pathlib import Path
 from datetime import datetime
 
+
+import sys
+sys.path.insert(0, ".")
+
+from engine.log_generator import run_generator
+from engine.parsers.auth_parser import parse_log_file
+from engine.detectors.rules import DetectionEngine
+from engine.storage import initialize_db, insert_events, insert_alerts, DB_PATH
+
+
+def bootstrap_data():
+    """
+    Si la base de datos no existe o está vacía,
+    genera datos de demo automáticamente.
+    Corre una sola vez al iniciar el dashboard.
+    """
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    initialize_db()
+
+    import sqlite3
+    conn = sqlite3.connect(str(DB_PATH))
+    count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    conn.close()
+
+    if count == 0:
+        with st.spinner("🔄 Initializing threat database..."):
+            # Generar 60 segundos de logs con 25% de ataques
+            log_file = run_generator(
+                duration_seconds=60,
+                events_per_second=5.0,
+                attack_probability=0.25
+            )
+            # Parsear y detectar
+            events, _ = parse_log_file(log_file)
+            engine = DetectionEngine()
+            alerts = engine.run_all_rules(events)
+            # Persistir
+            insert_events(events)
+            insert_alerts(alerts)
+
+
+bootstrap_data()
+
 DB_PATH = Path("data/siem.db")
 
 st.set_page_config(
