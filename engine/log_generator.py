@@ -1,7 +1,7 @@
 import random
 import time
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 logging.basicConfig(
@@ -37,16 +37,30 @@ HOSTNAMES = ["prod-server-01", "web-server-02", "db-server-03"]
 
 RAW_LOGS_PATH = Path("logs/raw")
 
-
 def timestamp_now() -> str:
     """Formato exacto de /var/log/auth.log en Linux."""
     return datetime.now().strftime("%b %d %H:%M:%S")
 
 
+def timestamp_random(hours_back: int = 24) -> str:
+    """
+    Genera un timestamp aleatorio dentro de las últimas N horas.
+    Usado para simular datos históricos distribuidos en el tiempo.
+    """
+    now = datetime.now()
+    delta = timedelta(
+        hours=random.randint(0, hours_back),
+        minutes=random.randint(0, 59),
+        seconds=random.randint(0, 59)
+    )
+    past_time = now - delta
+    return past_time.strftime("%b %d %H:%M:%S")
+
+
 def generate_successful_login(ip: str, user: str, hostname: str) -> str:
     port = random.randint(49152, 65535)
     return (
-        f"{timestamp_now()} {hostname} sshd[{random.randint(1000,9999)}]: "
+        f"{timestamp_random()} {hostname} sshd[{random.randint(1000,9999)}]: "
         f"Accepted password for {user} from {ip} port {port} ssh2"
     )
 
@@ -54,7 +68,7 @@ def generate_successful_login(ip: str, user: str, hostname: str) -> str:
 def generate_failed_login(ip: str, user: str, hostname: str) -> str:
     port = random.randint(49152, 65535)
     return (
-        f"{timestamp_now()} {hostname} sshd[{random.randint(1000,9999)}]: "
+        f"{timestamp_random()} {hostname} sshd[{random.randint(1000,9999)}]: "
         f"Failed password for {user} from {ip} port {port} ssh2"
     )
 
@@ -62,14 +76,14 @@ def generate_failed_login(ip: str, user: str, hostname: str) -> str:
 def generate_invalid_user(ip: str, user: str, hostname: str) -> str:
     port = random.randint(49152, 65535)
     return (
-        f"{timestamp_now()} {hostname} sshd[{random.randint(1000,9999)}]: "
+        f"{timestamp_random()} {hostname} sshd[{random.randint(1000,9999)}]: "
         f"Invalid user {user} from {ip} port {port}"
     )
 
 
 def generate_sudo_command(user: str, hostname: str, command: str) -> str:
     return (
-        f"{timestamp_now()} {hostname} sudo[{random.randint(1000,9999)}]: "
+        f"{timestamp_random()} {hostname} sudo[{random.randint(1000,9999)}]: "
         f"{user} : TTY=pts/0 ; PWD=/home/{user} ; USER=root ; COMMAND={command}"
     )
 
