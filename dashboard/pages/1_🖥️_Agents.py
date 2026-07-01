@@ -35,15 +35,15 @@ with st.sidebar:
     sidebar_brand()
     st.markdown('<div class="section-label">Navigation</div>', unsafe_allow_html=True)
     st.markdown(
-        "<div class='terminal-text'>🏠 Home — sidebar arriba</div>"
-        "<div class='terminal-text'>🖥️ Agents — esta página</div>",
+        "<div class='muted-text'>Home — arriba en el sidebar</div>"
+        "<div class='muted-text'>Agents — esta página</div>",
         unsafe_allow_html=True
     )
 
 st.markdown("""
-<h1 style='margin:0'>🖥️ AGENTS</h1>
-<p style='color:#1f4a2e;font-family:Share Tech Mono,monospace;font-size:0.7rem;margin:4px 0 0'>
-    FLOTA DE HOSTS MONITOREADOS · ESTADO EN TIEMPO REAL
+<h1 style='margin:0'>Agents</h1>
+<p class='muted-text' style='margin:4px 0 0'>
+    Flota de hosts monitoreados · Estado en tiempo real
 </p>
 """, unsafe_allow_html=True)
 st.markdown("---")
@@ -52,50 +52,46 @@ agents = api_client.get_agents()
 
 k1, k2, k3 = st.columns(3)
 active = sum(1 for a in agents if a["status"] == "ACTIVE")
-with k1: st.metric("TOTAL AGENTS", len(agents))
-with k2: st.metric("ACTIVE", active)
-with k3: st.metric("DISCONNECTED", len(agents) - active)
+with k1: st.metric("Total agents", len(agents))
+with k2: st.metric("Active", active)
+with k3: st.metric("Disconnected", len(agents) - active)
 
 st.markdown("---")
-st.markdown('<div class="section-label">Registered Agents</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-label">Registered agents</div>', unsafe_allow_html=True)
 
 if not agents:
-    st.markdown("<div class='terminal-text'>// NO AGENTS REGISTERED</div>", unsafe_allow_html=True)
+    st.markdown("<div class='muted-text'>No agents registered</div>", unsafe_allow_html=True)
 else:
     for agent in agents:
         status = agent["status"]
         badge_class = "status-badge-active" if status == "ACTIVE" else "status-badge-disconnected"
         sources_html = "".join(
-            f"<span class='source-tag'>{s.upper()}</span>" for s in agent["log_sources"]
+            f"<span class='chip'>{s.upper()}</span>" for s in agent["log_sources"]
         )
         st.markdown(f"""
-        <div class='alert-high' style='animation:none'>
-            <div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>
+        <div class='alert-card'>
+            <div style='display:flex;align-items:center;gap:8px;margin-bottom:8px'>
                 <span class='{badge_class}'>{status}</span>
-                <span style='color:#e2e8f0;font-size:0.85rem;
-                             font-family:Rajdhani,sans-serif;font-weight:600'>
+                <span style='color:#F1F0EE;font-size:0.85rem;font-weight:600'>
                     {agent['hostname']}
                 </span>
-                <span style='color:#334155;font-size:0.6rem;margin-left:auto'>
-                    {agent['agent_id']}
-                </span>
+                <span class='muted-text' style='margin-left:auto'>{agent['agent_id']}</span>
             </div>
-            <div style='color:#64748b;font-size:0.72rem;margin-bottom:6px;
-                        font-family:Rajdhani,sans-serif'>
+            <div class='muted-text' style='margin-bottom:8px'>
                 IP: {agent['ip_address']} &nbsp;·&nbsp; OS: {agent['os']} &nbsp;·&nbsp;
                 Last seen: {agent['last_seen'] or 'never'}
             </div>
-            <div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px'>
+            <div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px'>
                 {sources_html}
             </div>
-            <div class='terminal-text'>
+            <div class='muted-text'>
                 events={agent['event_count']} · alerts={agent['alert_count']}
             </div>
         </div>
         """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown('<div class="section-label">📋 Raw Table</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-label">Raw table</div>', unsafe_allow_html=True)
 if agents:
     df = pd.DataFrame([{
         "Agent ID": a["agent_id"],

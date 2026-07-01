@@ -1,233 +1,194 @@
 import streamlit as st
 
 # Tema visual compartido por todas las páginas del dashboard
-# (Home, Agents, ...). Se centraliza aquí para no duplicar el
-# bloque de CSS en cada archivo de dashboard/pages/.
+# (Home, Agents, ...). "Quiet Console" — antracita cálido + acento zafiro,
+# sin neón ni parpadeos: la idea es que se lea como un producto SaaS
+# terminado, no como una terminal de película de hackers.
 
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&display=swap');
+:root {
+    --bg:            #17181C;
+    --bg-sidebar:    #121317;
+    --surface:       #1D1E23;
+    --border:        #2B2C31;
+    --text:          #F1F0EE;
+    --text-muted:    #ABA9A3;
+    --text-faint:    #6E6D68;
+    --accent:        #5B8CF0;
+    --critical:      #F0685E;
+    --critical-bg:   rgba(240,104,94,0.16);
+    --critical-text: #F0938B;
+    --high:          #E5A63C;
+    --high-bg:       rgba(229,166,60,0.16);
+    --medium:        #6B93D6;
+    --medium-bg:     rgba(107,147,214,0.16);
+    --ok:            #5FD09A;
+}
 
 /* ── BASE ── */
 html, body, [class*="css"] {
-    font-family: 'Rajdhani', sans-serif;
-    background-color: #030712;
-    color: #94a3b8;
+    font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background-color: var(--bg);
+    color: var(--text-muted);
 }
-
-.stApp {
-    background:
-        linear-gradient(rgba(0,255,136,0.015) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0,255,136,0.015) 1px, transparent 1px),
-        #030712;
-    background-size: 40px 40px;
-}
+.stApp { background: var(--bg); }
 
 /* ── SIDEBAR ── */
 [data-testid="stSidebar"] {
-    background: #050d18 !important;
-    border-right: 1px solid #0f2a1a;
+    background: var(--bg-sidebar) !important;
+    border-right: 1px solid var(--border);
 }
-[data-testid="stSidebar"] * { color: #4b7a5e !important; }
+[data-testid="stSidebar"] * { color: var(--text-muted) !important; }
 
 /* ── HEADERS ── */
 h1 {
-    font-family: 'Share Tech Mono', monospace !important;
-    color: #00ff88 !important;
-    font-size: 1.6rem !important;
-    text-shadow: 0 0 20px rgba(0,255,136,0.4);
-    letter-spacing: 0.1em;
+    color: var(--text) !important;
+    font-size: 1.5rem !important;
+    font-weight: 650 !important;
+    letter-spacing: -0.01em;
 }
 h2, h3 {
-    font-family: 'Rajdhani', sans-serif !important;
-    color: #64748b !important;
+    color: var(--text-muted) !important;
     font-weight: 600 !important;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    font-size: 0.75rem !important;
+    font-size: 0.8rem !important;
+    letter-spacing: 0.02em;
 }
 
-/* ── MÉTRICAS ── */
+/* ── METRICAS (KPIs) ── */
 [data-testid="metric-container"] {
-    background: #050d18;
-    border: 1px solid #0f2a1a;
-    border-radius: 4px;
-    padding: 16px !important;
-    position: relative;
-    overflow: hidden;
-    transition: border-color 0.3s;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
 }
-[data-testid="metric-container"]::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, transparent, #00ff88, transparent);
-    animation: scanline 3s linear infinite;
-}
-@keyframes scanline {
-    0%   { transform: translateX(-100%); }
-    100% { transform: translateX(100%); }
-}
-[data-testid="metric-container"]:hover { border-color: #00ff88; }
 [data-testid="stMetricLabel"] {
-    color: #1f4a2e !important;
-    font-family: 'Share Tech Mono', monospace !important;
-    font-size: 0.65rem !important;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
+    color: var(--text-muted) !important;
+    font-size: 0.72rem !important;
+    letter-spacing: 0.02em;
 }
 [data-testid="stMetricValue"] {
-    font-family: 'Share Tech Mono', monospace !important;
-    font-size: 2rem !important;
-    color: #00ff88 !important;
-    text-shadow: 0 0 15px rgba(0,255,136,0.3);
+    font-size: 1.6rem !important;
+    font-weight: 650 !important;
+    color: var(--text) !important;
+    letter-spacing: -0.01em;
 }
 
 /* ── TABLAS ── */
 [data-testid="stDataFrame"] {
-    border: 1px solid #0f2a1a;
-    border-radius: 4px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
 }
 
 /* ── SELECTBOX ── */
 [data-testid="stSelectbox"] > div > div {
-    background: #050d18 !important;
-    border: 1px solid #0f2a1a !important;
-    border-radius: 4px !important;
-    color: #4b7a5e !important;
-    font-family: 'Share Tech Mono', monospace !important;
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+    color: var(--text) !important;
 }
 
 /* ── DIVIDER ── */
-hr { border-color: #0f2a1a !important; }
+hr { border-color: var(--border) !important; }
 
-/* ── CUSTOM CARDS ── */
-.alert-critical {
-    background: linear-gradient(135deg, #1a0a0a, #0d0505);
-    border: 1px solid #7f1d1d;
-    border-left: 3px solid #ff2d55;
-    border-radius: 4px;
-    padding: 12px 16px;
+/* ── ALERT CARDS ── */
+.alert-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
     margin-bottom: 8px;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 0.75rem;
-    animation: pulse-red 2s infinite;
-}
-.alert-high {
-    background: linear-gradient(135deg, #1a0f00, #0d0800);
-    border: 1px solid #78350f;
-    border-left: 3px solid #ffb800;
-    border-radius: 4px;
-    padding: 12px 16px;
-    margin-bottom: 8px;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 0.75rem;
-}
-@keyframes pulse-red {
-    0%, 100% { border-left-color: #ff2d55; }
-    50%       { border-left-color: #ff6b81; box-shadow: 0 0 12px rgba(255,45,85,0.2); }
 }
 
-.severity-badge-critical {
-    background: #ff2d55;
-    color: #fff;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 0.6rem;
-    padding: 2px 8px;
-    border-radius: 2px;
-    font-weight: bold;
+/* ── SEVERITY PILLS ── */
+.sev-pill {
+    font-size: 0.68rem;
+    font-weight: 650;
+    padding: 3px 10px;
+    border-radius: 999px;
 }
-.severity-badge-high {
-    background: #ffb800;
-    color: #000;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 0.6rem;
-    padding: 2px 8px;
-    border-radius: 2px;
-    font-weight: bold;
+.sev-critical { background: var(--critical-bg); color: var(--critical-text); }
+.sev-high     { background: var(--high-bg);     color: var(--high); }
+.sev-medium   { background: var(--medium-bg);   color: var(--medium); }
+.sev-low      { background: var(--border);      color: var(--text-muted); }
+
+/* ── CHIPS (ip / mitre / source / agent) ── */
+.chip {
+    background: var(--border);
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    padding: 3px 10px;
+    border-radius: 999px;
 }
+.chip-accent { color: var(--accent); }
+
 .status-badge-active {
-    background: #00ff88;
-    color: #000;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 0.6rem;
-    padding: 2px 8px;
-    border-radius: 2px;
-    font-weight: bold;
+    background: rgba(95,208,154,0.16);
+    color: var(--ok);
+    font-size: 0.68rem;
+    font-weight: 650;
+    padding: 3px 10px;
+    border-radius: 999px;
 }
 .status-badge-disconnected {
-    background: #334155;
-    color: #cbd5e1;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 0.6rem;
-    padding: 2px 8px;
-    border-radius: 2px;
-    font-weight: bold;
+    background: var(--border);
+    color: var(--text-faint);
+    font-size: 0.68rem;
+    font-weight: 650;
+    padding: 3px 10px;
+    border-radius: 999px;
 }
-.ip-tag {
-    background: #0a1628;
-    color: #00ff88;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 0.7rem;
-    padding: 2px 10px;
-    border: 1px solid #0f2a1a;
-    border-radius: 2px;
-}
-.mitre-tag {
-    background: #0d0d1a;
-    color: #6366f1;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 0.65rem;
-    padding: 2px 8px;
-    border: 1px solid #1e1b4b;
-    border-radius: 2px;
-}
-.source-tag {
-    background: #0d1a14;
-    color: #4b7a5e;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 0.65rem;
-    padding: 2px 8px;
-    border: 1px solid #0f2a1a;
-    border-radius: 2px;
-}
-.terminal-text {
-    font-family: 'Share Tech Mono', monospace;
-    color: #4b7a5e;
-    font-size: 0.72rem;
-}
-.status-live {
+
+.status-dot {
     display: inline-block;
-    width: 8px; height: 8px;
-    background: #00ff88;
+    width: 7px; height: 7px;
     border-radius: 50%;
     margin-right: 6px;
-    animation: blink 1.5s infinite;
-    box-shadow: 0 0 6px #00ff88;
+    background: var(--ok);
 }
-@keyframes blink {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.2; }
-}
+.status-dot.off { background: var(--text-faint); }
+
 .section-label {
-    font-family: 'Share Tech Mono', monospace;
-    color: #1f4a2e;
-    font-size: 0.65rem;
-    text-transform: uppercase;
-    letter-spacing: 0.15em;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
     margin-bottom: 10px;
-    border-bottom: 1px solid #0f2a1a;
-    padding-bottom: 6px;
+}
+
+.muted-text {
+    color: var(--text-faint);
+    font-size: 0.78rem;
 }
 </style>
 """
+
+# Colores compartidos por tipo de evento — usados en los gráficos Plotly
+# y en cualquier chip que necesite distinguir el tipo de evento.
+EVENT_COLORS = {
+    "failed_password":   "#F0685E",
+    "accepted_password": "#5FD09A",
+    "invalid_user":       "#E5A63C",
+    "sudo_command":       "#8C7AE0",
+    "http_request":       "#5B8CF0",
+    "fim_modified":        "#D98E3B",
+    "fim_created":         "#5FD09A",
+    "fim_deleted":         "#F0685E",
+}
+
+SEVERITY_CLASS = {
+    "CRITICAL": "sev-critical",
+    "HIGH":     "sev-high",
+    "MEDIUM":   "sev-medium",
+    "LOW":      "sev-low",
+}
 
 # Layout compartido para gráficos Plotly.
 PLOTLY = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="Share Tech Mono", color="#4b7a5e"),
+    font=dict(family="-apple-system, Segoe UI, sans-serif", color="#ABA9A3"),
     margin=dict(l=10, r=10, t=10, b=10),
 )
 
@@ -241,13 +202,11 @@ def sidebar_brand() -> None:
     """Bloque de marca que aparece arriba del sidebar en todas las páginas."""
     st.markdown("""
     <div style='padding:8px 0 20px'>
-        <div style='font-family:Share Tech Mono,monospace;font-size:1rem;
-                    color:#00ff88;text-shadow:0 0 10px rgba(0,255,136,0.4)'>
-            SENTINEL//SIEM
+        <div style='font-size:1rem; font-weight:650; color:#F1F0EE'>
+            Sentinel
         </div>
-        <div style='color:#1f4a2e;font-size:0.65rem;font-family:Share Tech Mono,monospace;
-                    margin-top:2px'>
-            v3.0 · MULTI-AGENT DETECTION
+        <div style='color:#6E6D68; font-size:0.7rem; margin-top:2px'>
+            v3.0 · Multi-agent detection
         </div>
     </div>
     """, unsafe_allow_html=True)
