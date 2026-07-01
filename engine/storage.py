@@ -20,11 +20,14 @@ AGENT_OFFLINE_AFTER_SECONDS = 600
 def get_connection() -> sqlite3.Connection:
     """
     Retorna conexión a SQLite.
-    check_same_thread=False necesario para Streamlit.
+    check_same_thread=False necesario para Streamlit. timeout=30 + WAL
+    evitan "database is locked" cuando una página está escribiendo
+    (bootstrap) mientras otra lee (ej. la página Agents) al mismo tiempo.
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row  # Resultados como diccionarios
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 

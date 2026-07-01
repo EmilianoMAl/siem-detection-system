@@ -37,7 +37,7 @@ def bootstrap_data():
     initialize_db()
     register_agents(SIMULATED_AGENTS)
 
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
     count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
     conn.close()
 
@@ -78,7 +78,7 @@ inject_theme()
 # ── DATA LAYER ──
 @st.cache_resource
 def get_conn():
-    return sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    return sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=30.0)
 
 
 def _source_filter_clause(source: str) -> str:
