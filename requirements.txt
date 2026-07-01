@@ -1,9 +1,13 @@
-# Dependencias completas del proyecto (motor de detección + dashboard + tests).
-# Para desplegar solo el dashboard puedes usar dashboard/requirements.txt.
+# Dependencias completas del proyecto (API + engine + dashboard + tests).
+# Para desplegar cada servicio por separado usa api/requirements.txt o
+# dashboard/requirements.txt.
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
 streamlit>=1.44.0
 plotly>=5.22.0
 pandas>=2.2.2
 pyyaml>=6.0
+requests>=2.31.0
 
 # Tests
 pytest>=8.0.0

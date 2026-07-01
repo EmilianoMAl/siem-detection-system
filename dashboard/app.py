@@ -1,20 +1,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import sqlite3
+import requests
 from datetime import datetime
 
-import sys
-sys.path.insert(0, ".")
-
-from engine.agents import SIMULATED_AGENTS
-from engine.log_generator import run_generator
-from engine.pipeline import ingest_agent_logs
-from engine.detectors.rules import DetectionEngine
-from engine.storage import (
-    initialize_db, insert_events, insert_alerts, register_agents,
-    touch_agent, DB_PATH,
-)
+import api_client
 from theme import inject_theme, sidebar_brand, PLOTLY
 
 RULE_SOURCE = {
@@ -26,45 +16,6 @@ RULE_SOURCE = {
     "FIM_CRITICAL_FILE_CHANGE": "fim",
 }
 
-
-def bootstrap_data():
-    """
-    Si la base de datos no existe o está vacía, genera datos de demo
-    para toda la flota de agentes (ssh/web/fim según cada agente) y
-    corre el motor de detección. Corre una sola vez al iniciar el dashboard.
-    """
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    initialize_db()
-    register_agents(SIMULATED_AGENTS)
-
-    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
-    count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
-    conn.close()
-
-    if count == 0:
-        with st.spinner("🔄 Initializing threat database across all agents..."):
-            generated = run_generator(
-                agents=SIMULATED_AGENTS,
-                duration_seconds=45,
-                events_per_second=4.0,
-                attack_probability=0.25,
-                realtime=False,
-            )
-            all_events = []
-            for agent, source, filepath in generated:
-                events, _ = ingest_agent_logs(agent, source, filepath)
-                all_events.extend(events)
-                touch_agent(agent.agent_id)
-
-            engine = DetectionEngine()
-            alerts = engine.run_all_rules(all_events)
-
-            insert_events(all_events)
-            insert_alerts(alerts)
-
-
-bootstrap_data()
-
 st.set_page_config(
     page_title="SENTINEL — SIEM Dashboard",
     page_icon="🛡️",
@@ -74,73 +25,25 @@ st.set_page_config(
 
 inject_theme()
 
+try:
+    api_client.get_health()
+except requests.exceptions.RequestException:
+    st.error(
+        f"No se puede conectar a la API de SENTINEL en `{api_client.API_URL}`. "
+        f"¿Está corriendo `uvicorn api.main:app --port 8000`?"
+    )
+    st.stop()
 
-# ── DATA LAYER ──
-@st.cache_resource
-def get_conn():
-    return sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=30.0)
 
-
-def _source_filter_clause(source: str) -> str:
-    return "" if source == "ALL" else f"AND log_source = '{source.lower()}'"
-
-
+# ── DATA LAYER — el dashboard es un cliente puro de la API, no toca SQLite ──
 @st.cache_data(ttl=30)
 def load_summary(source: str):
-    conn = get_conn()
-    clause = _source_filter_clause(source)
-    row = conn.execute(f"""
-        SELECT
-            COUNT(*)                                          as total_events,
-            COUNT(DISTINCT source_ip)                         as unique_ips,
-            SUM(CASE WHEN event_type='failed_password' OR
-                          event_type='invalid_user' THEN 1 ELSE 0 END) as failed_logins,
-            SUM(CASE WHEN event_type='accepted_password' THEN 1 ELSE 0 END) as ok_logins,
-            SUM(CASE WHEN event_type='sudo_command'      THEN 1 ELSE 0 END) as sudo_events
-        FROM events WHERE 1=1 {clause}
-    """).fetchone()
-    alert_row = conn.execute("""
-        SELECT COUNT(*) as total,
-            SUM(CASE WHEN severity='CRITICAL' THEN 1 ELSE 0 END) as crit,
-            SUM(CASE WHEN severity='HIGH'     THEN 1 ELSE 0 END) as high
-        FROM alerts
-    """).fetchone()
-    agent_row = conn.execute("""
-        SELECT COUNT(*) as total,
-            SUM(CASE WHEN (strftime('%s','now') - strftime('%s', last_seen)) < 600
-                THEN 1 ELSE 0 END) as active
-        FROM agents
-    """).fetchone()
-    return {
-        "total_events": row[0] or 0,
-        "unique_ips":   row[1] or 0,
-        "failed":       row[2] or 0,
-        "ok_logins":    row[3] or 0,
-        "sudo":         row[4] or 0,
-        "total_alerts": alert_row[0] or 0,
-        "critical":     alert_row[1] or 0,
-        "high":         alert_row[2] or 0,
-        "agents_total":  agent_row[0] or 0,
-        "agents_active": agent_row[1] or 0,
-    }
+    return api_client.get_summary(source)
 
 
 @st.cache_data(ttl=30)
 def load_alerts():
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT alert_id, rule_name, severity, description,
-               source_ip, username, mitre_technique,
-               recommendation, detected_at, evidence
-        FROM alerts ORDER BY
-            CASE severity WHEN 'CRITICAL' THEN 0
-                          WHEN 'HIGH'     THEN 1 ELSE 2 END,
-            detected_at DESC
-    """).fetchall()
-    cols = ["alert_id", "rule_name", "severity", "description",
-            "source_ip", "username", "mitre_technique",
-            "recommendation", "detected_at", "evidence"]
-    alerts = [dict(zip(cols, r)) for r in rows]
+    alerts = api_client.get_alerts()
     for a in alerts:
         a["source"] = RULE_SOURCE.get(a["rule_name"], "ssh")
     return alerts
@@ -148,44 +51,26 @@ def load_alerts():
 
 @st.cache_data(ttl=30)
 def load_top_ips(source: str):
-    conn = get_conn()
-    clause = _source_filter_clause(source)
-    event_types = "('failed_password','invalid_user')" if source != "web" else "('http_request')"
-    rows = conn.execute(f"""
-        SELECT source_ip, COUNT(*) as attempts,
-               COUNT(DISTINCT username) as users
-        FROM events
-        WHERE event_type IN {event_types}
-          AND source_ip IS NOT NULL {clause}
-        GROUP BY source_ip ORDER BY attempts DESC LIMIT 8
-    """).fetchall()
-    return pd.DataFrame(rows, columns=["IP", "Intentos", "Usuarios objetivo"])
+    rows = api_client.get_top_ips(source)
+    return pd.DataFrame(
+        [(r["source_ip"], r["attempts"], r["targeted_users"]) for r in rows],
+        columns=["IP", "Intentos", "Usuarios objetivo"],
+    )
 
 
 @st.cache_data(ttl=30)
 def load_event_types(source: str):
-    conn = get_conn()
-    clause = _source_filter_clause(source)
-    rows = conn.execute(f"""
-        SELECT event_type, COUNT(*) as n FROM events
-        WHERE 1=1 {clause}
-        GROUP BY event_type
-    """).fetchall()
-    return pd.DataFrame(rows, columns=["Tipo", "Count"])
+    rows = api_client.get_event_types(source)
+    return pd.DataFrame([(r["event_type"], r["n"]) for r in rows], columns=["Tipo", "Count"])
 
 
 @st.cache_data(ttl=30)
 def load_timeline(source: str):
-    conn = get_conn()
-    clause = _source_filter_clause(source)
-    rows = conn.execute(f"""
-        SELECT substr(timestamp, 1, 8) as hour,
-               event_type, COUNT(*) as n
-        FROM events WHERE 1=1 {clause}
-        GROUP BY hour, event_type
-        ORDER BY hour
-    """).fetchall()
-    return pd.DataFrame(rows, columns=["Hora", "Tipo", "Count"])
+    rows = api_client.get_timeline(source)
+    return pd.DataFrame(
+        [(r["hour"], r["event_type"], r["n"]) for r in rows],
+        columns=["Hora", "Tipo", "Count"],
+    )
 
 
 # ── SIDEBAR ──

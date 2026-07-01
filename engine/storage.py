@@ -360,6 +360,113 @@ def query_top_attacking_ips(limit: int = 10) -> list[dict]:
     return rows
 
 
+def _log_source_clause(log_source: str) -> tuple[str, tuple]:
+    """
+    Clausula SQL parametrizada para filtrar por fuente. Nunca interpola
+    el valor directamente en el SQL — se expone vía API HTTP y un
+    log_source arbitrario no debe poder inyectar SQL.
+    """
+    if log_source == "ALL":
+        return "", ()
+    return "AND log_source = ?", (log_source.lower(),)
+
+
+def query_summary(log_source: str = "ALL") -> dict:
+    """KPIs del dashboard (eventos, alertas, agentes), con filtro opcional por fuente."""
+    conn = get_connection()
+    clause, params = _log_source_clause(log_source)
+
+    row = conn.execute(f"""
+        SELECT
+            COUNT(*) as total_events,
+            COUNT(DISTINCT source_ip) as unique_ips,
+            SUM(CASE WHEN event_type='failed_password' OR
+                          event_type='invalid_user' THEN 1 ELSE 0 END) as failed_logins,
+            SUM(CASE WHEN event_type='accepted_password' THEN 1 ELSE 0 END) as ok_logins,
+            SUM(CASE WHEN event_type='sudo_command'      THEN 1 ELSE 0 END) as sudo_events
+        FROM events WHERE 1=1 {clause}
+    """, params).fetchone()
+
+    alert_row = conn.execute("""
+        SELECT COUNT(*) as total,
+            SUM(CASE WHEN severity='CRITICAL' THEN 1 ELSE 0 END) as crit,
+            SUM(CASE WHEN severity='HIGH'     THEN 1 ELSE 0 END) as high
+        FROM alerts
+    """).fetchone()
+
+    agent_row = conn.execute(f"""
+        SELECT COUNT(*) as total,
+            SUM(CASE WHEN (strftime('%s','now') - strftime('%s', last_seen)) < {AGENT_OFFLINE_AFTER_SECONDS}
+                THEN 1 ELSE 0 END) as active
+        FROM agents
+    """).fetchone()
+
+    conn.close()
+    return {
+        "total_events": row[0] or 0,
+        "unique_ips":   row[1] or 0,
+        "failed":       row[2] or 0,
+        "ok_logins":    row[3] or 0,
+        "sudo":         row[4] or 0,
+        "total_alerts": alert_row[0] or 0,
+        "critical":     alert_row[1] or 0,
+        "high":         alert_row[2] or 0,
+        "agents_total":  agent_row[0] or 0,
+        "agents_active": agent_row[1] or 0,
+    }
+
+
+def query_top_ips(log_source: str = "ALL", limit: int = 8) -> list[dict]:
+    """Top IPs por intentos fallidos (ssh) o requests (web), con filtro opcional por fuente."""
+    conn = get_connection()
+    clause, params = _log_source_clause(log_source)
+    event_types = "('http_request')" if log_source == "WEB" else "('failed_password','invalid_user')"
+
+    rows = conn.execute(f"""
+        SELECT source_ip, COUNT(*) as attempts,
+               COUNT(DISTINCT username) as targeted_users
+        FROM events
+        WHERE event_type IN {event_types}
+          AND source_ip IS NOT NULL {clause}
+        GROUP BY source_ip ORDER BY attempts DESC LIMIT ?
+    """, params + (limit,)).fetchall()
+
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def query_event_types(log_source: str = "ALL") -> list[dict]:
+    """Distribución de eventos por tipo, con filtro opcional por fuente."""
+    conn = get_connection()
+    clause, params = _log_source_clause(log_source)
+
+    rows = conn.execute(f"""
+        SELECT event_type, COUNT(*) as n FROM events
+        WHERE 1=1 {clause}
+        GROUP BY event_type
+    """, params).fetchall()
+
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def query_timeline(log_source: str = "ALL") -> list[dict]:
+    """Serie de tiempo de eventos por tipo, con filtro opcional por fuente."""
+    conn = get_connection()
+    clause, params = _log_source_clause(log_source)
+
+    rows = conn.execute(f"""
+        SELECT substr(timestamp, 1, 8) as hour,
+               event_type, COUNT(*) as n
+        FROM events WHERE 1=1 {clause}
+        GROUP BY hour, event_type
+        ORDER BY hour
+    """, params).fetchall()
+
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, ".")

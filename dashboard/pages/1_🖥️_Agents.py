@@ -1,19 +1,17 @@
 import sys
 from pathlib import Path
 
-# Asegura que "engine" (raíz del repo) y "theme" (dashboard/) sean importables
-# sin depender de cómo Streamlit resuelva sys.path para páginas en subcarpetas.
+# Asegura que "theme"/"api_client" (dashboard/) sean importables sin depender
+# de cómo Streamlit resuelva sys.path para páginas en subcarpetas.
 _DASHBOARD_DIR = Path(__file__).resolve().parent.parent
-_REPO_ROOT = _DASHBOARD_DIR.parent
-for path in (str(_REPO_ROOT), str(_DASHBOARD_DIR)):
-    if path not in sys.path:
-        sys.path.insert(0, path)
+if str(_DASHBOARD_DIR) not in sys.path:
+    sys.path.insert(0, str(_DASHBOARD_DIR))
 
 import streamlit as st
 import pandas as pd
-import sqlite3
+import requests
 
-from engine.storage import DB_PATH, query_agents
+import api_client
 from theme import inject_theme, sidebar_brand
 
 st.set_page_config(
@@ -23,6 +21,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 inject_theme()
+
+try:
+    api_client.get_health()
+except requests.exceptions.RequestException:
+    st.error(
+        f"No se puede conectar a la API de SENTINEL en `{api_client.API_URL}`. "
+        f"¿Está corriendo `uvicorn api.main:app --port 8000`?"
+    )
+    st.stop()
 
 with st.sidebar:
     sidebar_brand()
@@ -41,13 +48,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.markdown("---")
 
-# Asegura que la DB ya exista (bootstrap corre en Home) sin volver a generar datos.
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-if not DB_PATH.exists():
-    st.warning("Todavía no hay datos — abre la página Home primero para inicializar SENTINEL.")
-    st.stop()
-
-agents = query_agents()
+agents = api_client.get_agents()
 
 k1, k2, k3 = st.columns(3)
 active = sum(1 for a in agents if a["status"] == "ACTIVE")

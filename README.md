@@ -2,16 +2,18 @@
 
 ![Status](https://img.shields.io/badge/status-active-brightgreen)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python)
+![FastAPI](https://img.shields.io/badge/FastAPI-manager-009688?logo=fastapi)
 ![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite)
-![Streamlit](https://img.shields.io/badge/Streamlit-deployed-FF4B4B?logo=streamlit)
+![Streamlit](https://img.shields.io/badge/Streamlit-dashboard-FF4B4B?logo=streamlit)
+![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker)
 ![MITRE](https://img.shields.io/badge/MITRE%20ATT%26CK-mapped-red)
 ![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC)
 
 SIEM de detección multi-agente inspirado en el modelo manager/agente de
 Wazuh: una flota de hosts simulados reporta eventos de **SSH, tráfico web
-y FIM (integridad de archivos)** a un manager central, que los normaliza,
-los corre contra un ruleset configurable mapeado a MITRE ATT&CK, y los
-visualiza en un dashboard estilo SOC.
+y FIM (integridad de archivos)** a un manager central (API FastAPI), que
+los normaliza, los corre contra un ruleset configurable mapeado a MITRE
+ATT&CK, y los expone a un dashboard estilo SOC.
 
 ---
 
@@ -39,11 +41,21 @@ visualiza en un dashboard estilo SOC.
 │  engine/detectors/rules.py│  MITRE ATT&CK mapped alerts
 └────────────┬──────────────┘
              ▼
-┌─────────────────────┐    ┌───────────────────────────┐
-│  SQLite Database     │    │  Streamlit SIEM Dashboard  │
-│  events+alerts+agents│───▶│  Home + Agents page        │
-└─────────────────────┘    └───────────────────────────┘
+┌──────────────────────────┐
+│  SQLite Database          │  events + alerts + agents
+└────────────┬──────────────┘
+             │  engine/bootstrap.py (corre al iniciar si la DB está vacía)
+             ▼
+┌──────────────────────────┐         ┌───────────────────────────┐
+│  SENTINEL API (FastAPI)   │  HTTP   │  Streamlit Dashboard       │
+│  api/main.py · :8000      │◀───────▶│  Home + Agents · :8501     │
+│  /summary /alerts /agents │         │  (cliente puro de la API)  │
+└──────────────────────────┘         └───────────────────────────┘
 ```
+
+El dashboard **no toca SQLite directamente** — todo pasa por la API, lo
+que permite desplegar cada pieza como su propio contenedor/proceso (ver
+[`docker-compose.yml`](docker-compose.yml) y [`DEPLOYMENT.md`](DEPLOYMENT.md)).
 
 ---
 
@@ -87,7 +99,9 @@ un SIEM real.
 | Parsing | Python + Regex |
 | Detection engine | Python, reglas configurables vía YAML |
 | Storage | SQLite (events, alerts, agents) |
-| Dashboard | Streamlit + Plotly (multi-page) |
+| Manager API | FastAPI + Uvicorn (`/docs` con Swagger UI) |
+| Dashboard | Streamlit + Plotly (multi-page), cliente HTTP de la API |
+| Deployment | Docker Compose + Nginx (ver `DEPLOYMENT.md`) |
 | Tests | Pytest |
 
 ---
@@ -100,11 +114,12 @@ siem-detection-system/
 ├── config/
 │   └── rules.yaml               # Umbrales y patrones del ruleset
 │
-├── engine/
+├── engine/                       # Lógica de negocio — el manager
 │   ├── agents.py                 # Entidad Agent + flota simulada
 │   ├── config.py                 # Carga config/rules.yaml
+│   ├── bootstrap.py              # Genera datos de demo si la DB está vacía
 │   ├── log_generator.py          # Orquestador multi-agente/multi-fuente
-│   ├── pipeline.py               # Dispatch de parsing por fuente
+│   ├── pipeline.py                # Dispatch de parsing por fuente
 │   ├── storage.py                # Persistencia SQLite (events/alerts/agents)
 │   ├── generators/
 │   │   ├── ssh_generator.py
@@ -117,11 +132,23 @@ siem-detection-system/
 │   └── detectors/
 │       └── rules.py              # 6 reglas + Alert generation
 │
-├── dashboard/
+├── api/                          # Manager HTTP — único que toca engine/
+│   ├── main.py                   # FastAPI: /summary /alerts /agents /...
+│   ├── schemas.py                # Modelos Pydantic de respuesta
+│   ├── Dockerfile
+│   └── requirements.txt
+│
+├── dashboard/                    # Cliente puro de la API (sin SQLite)
 │   ├── app.py                    # Home — KPIs, feed de alertas, gráficos
+│   ├── api_client.py             # Wrapper HTTP sobre la API
 │   ├── theme.py                  # CSS/tema compartido entre páginas
+│   ├── Dockerfile
 │   └── pages/
 │       └── 1_🖥️_Agents.py        # Estado de la flota de agentes
+│
+├── deploy/nginx/sentinel.conf    # Reverse proxy para la VM
+├── docker-compose.yml            # api + dashboard
+├── DEPLOYMENT.md                 # Guía paso a paso: VM Hyper-V + Docker + Nginx
 │
 ├── data/
 │   └── siem.db                    # SQLite (gitignored)
@@ -158,17 +185,25 @@ pip install -r requirements.txt
 pytest -q
 ```
 
-### 4. Generate + ingest logs manually (opcional — el dashboard lo hace solo)
+### 4. Launch the API (el manager — genera los datos de demo al iniciar)
 ```bash
-python -m engine.storage
+uvicorn api.main:app --reload --port 8000
 ```
+Docs interactivas en http://localhost:8000/docs
 
-### 5. Launch dashboard
+### 5. Launch the dashboard (en otra terminal)
 ```bash
 streamlit run dashboard/app.py
 ```
-Al abrir por primera vez, SENTINEL genera automáticamente datos de demo
-para los 4 agentes simulados. La página **Agents** aparece en el sidebar.
+El dashboard es un cliente HTTP puro — necesita la API corriendo en
+`http://localhost:8000` (configurable con la variable de entorno
+`SENTINEL_API_URL`). La página **Agents** aparece en el sidebar.
+
+### Alternativa: Docker Compose (api + dashboard juntos)
+```bash
+docker compose up -d --build
+```
+Ver [`DEPLOYMENT.md`](DEPLOYMENT.md) para desplegar esto en una VM propia.
 
 ---
 
@@ -193,6 +228,14 @@ que el ruleset de Wazuh o las reglas SIGMA.
 Cada regla está mapeada a una técnica MITRE. Es el estándar de la
 industria para clasificación de amenazas — hace que las alertas sean
 accionables para un analista.
+
+**Por qué separar la API del dashboard**
+Streamlit hablando directo con SQLite funciona para una demo, pero no
+escala a un despliegue real: no puedes correr el dashboard en un host y
+la base de datos en otro, ni añadir después un agente real que empuje
+eventos sin que el dashboard también tenga que saber de SQLite. La API
+(FastAPI) es la única que toca `engine/`; el dashboard es un cliente HTTP
+puro — así cada pieza se despliega y escala por separado.
 
 ---
 
