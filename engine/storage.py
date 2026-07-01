@@ -1,15 +1,20 @@
 import sqlite3
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from engine.parsers.auth_parser import LogEvent
 from engine.detectors.rules import Alert
+from engine.agents import Agent
 
 logger = logging.getLogger(__name__)
 
 DB_PATH = Path("data/siem.db")
+
+# Ventana de "heartbeat": si un agente no reporta en este tiempo, se
+# muestra como DISCONNECTED en vez de ACTIVE (igual que el panel de
+# Agents de Wazuh).
+AGENT_OFFLINE_AFTER_SECONDS = 600
 
 
 def get_connection() -> sqlite3.Connection:
@@ -27,6 +32,10 @@ def initialize_db() -> None:
     """
     Crea las tablas si no existen.
     Idempotente — seguro de correr múltiples veces.
+
+    NOTA: si vienes de una versión anterior de SENTINEL (sin agentes/
+    multi-fuente), borra data/siem.db una vez — el esquema cambió y
+    no se escribió una migración para datos de demo locales.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -36,12 +45,15 @@ def initialize_db() -> None:
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp     TEXT,
             hostname      TEXT,
+            agent_id      TEXT,
+            log_source    TEXT DEFAULT 'ssh',   -- ssh | web | fim
             service       TEXT,
             event_type    TEXT NOT NULL,
             username      TEXT,
             source_ip     TEXT,
             source_port   INTEGER,
             command       TEXT,
+            metadata      TEXT,   -- JSON con campos propios de cada fuente
             raw_line      TEXT,
             parsed_at     TEXT,
             created_at    TEXT DEFAULT (datetime('now'))
@@ -63,11 +75,27 @@ def initialize_db() -> None:
             created_at      TEXT DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS agents (
+            agent_id      TEXT PRIMARY KEY,
+            hostname      TEXT NOT NULL,
+            ip_address    TEXT,
+            os            TEXT,
+            log_sources   TEXT,   -- JSON array, ej. ["ssh","web"]
+            last_seen     TEXT,
+            registered_at TEXT DEFAULT (datetime('now'))
+        );
+
         CREATE INDEX IF NOT EXISTS idx_events_source_ip
             ON events(source_ip);
 
         CREATE INDEX IF NOT EXISTS idx_events_event_type
             ON events(event_type);
+
+        CREATE INDEX IF NOT EXISTS idx_events_agent_id
+            ON events(agent_id);
+
+        CREATE INDEX IF NOT EXISTS idx_events_log_source
+            ON events(log_source);
 
         CREATE INDEX IF NOT EXISTS idx_alerts_severity
             ON alerts(severity);
@@ -83,8 +111,8 @@ def initialize_db() -> None:
 
 def insert_events(events: list[LogEvent]) -> int:
     """
-    Inserta eventos parseados en la base de datos.
-    Usa batch insert para eficiencia.
+    Inserta eventos parseados (de cualquier fuente: ssh/web/fim) en la
+    base de datos. Usa batch insert para eficiencia.
 
     Returns:
         Número de eventos insertados
@@ -96,17 +124,17 @@ def insert_events(events: list[LogEvent]) -> int:
     cursor = conn.cursor()
 
     rows = [(
-        e.timestamp, e.hostname, e.service,
-        e.event_type, e.username, e.source_ip,
-        e.source_port, e.command, e.raw_line, e.parsed_at
+        e.timestamp, e.hostname, e.agent_id, e.log_source, e.service,
+        e.event_type, e.username, e.source_ip, e.source_port, e.command,
+        json.dumps(e.metadata or {}), e.raw_line, e.parsed_at
     ) for e in events]
 
     cursor.executemany("""
         INSERT INTO events (
-            timestamp, hostname, service, event_type,
-            username, source_ip, source_port, command,
+            timestamp, hostname, agent_id, log_source, service, event_type,
+            username, source_ip, source_port, command, metadata,
             raw_line, parsed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, rows)
 
     conn.commit()
@@ -155,6 +183,73 @@ def insert_alerts(alerts: list[Alert]) -> int:
     return inserted
 
 
+def register_agents(agents: list[Agent]) -> None:
+    """
+    Registra la flota de agentes conocida. INSERT OR IGNORE — si el
+    agente ya existe no se pisa su last_seen/registered_at.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    for agent in agents:
+        cursor.execute("""
+            INSERT OR IGNORE INTO agents (
+                agent_id, hostname, ip_address, os, log_sources
+            ) VALUES (?, ?, ?, ?, ?)
+        """, (
+            agent.agent_id, agent.hostname, agent.ip_address,
+            agent.os, json.dumps(agent.log_sources)
+        ))
+
+    conn.commit()
+    conn.close()
+
+
+def touch_agent(agent_id: str) -> None:
+    """Marca a un agente como visto ahora mismo (heartbeat)."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE agents SET last_seen = datetime('now') WHERE agent_id = ?",
+        (agent_id,)
+    )
+    conn.commit()
+    conn.close()
+
+
+def query_agents() -> list[dict]:
+    """
+    Lista los agentes con su estado (ACTIVE/DISCONNECTED según
+    last_seen) y conteo de eventos/alertas asociados.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(f"""
+        SELECT
+            a.agent_id, a.hostname, a.ip_address, a.os, a.log_sources,
+            a.last_seen, a.registered_at,
+            CASE
+                WHEN a.last_seen IS NULL THEN 'NEVER_CONNECTED'
+                WHEN (strftime('%s','now') - strftime('%s', a.last_seen))
+                     < {AGENT_OFFLINE_AFTER_SECONDS} THEN 'ACTIVE'
+                ELSE 'DISCONNECTED'
+            END AS status,
+            (SELECT COUNT(*) FROM events e WHERE e.agent_id = a.agent_id) AS event_count,
+            (SELECT COUNT(*) FROM alerts al WHERE al.hostname = a.hostname) AS alert_count
+        FROM agents a
+        ORDER BY a.hostname
+    """)
+
+    rows = []
+    for row in cursor.fetchall():
+        d = dict(row)
+        d["log_sources"] = json.loads(d["log_sources"]) if d["log_sources"] else []
+        rows.append(d)
+
+    conn.close()
+    return rows
+
+
 def query_alerts(
     severity: Optional[str] = None,
     limit: int = 100
@@ -197,7 +292,11 @@ def query_events_summary() -> dict:
             SUM(CASE WHEN event_type = 'accepted_password'
                 THEN 1 ELSE 0 END)                      as successful_logins,
             SUM(CASE WHEN event_type = 'sudo_command'
-                THEN 1 ELSE 0 END)                      as sudo_events
+                THEN 1 ELSE 0 END)                      as sudo_events,
+            SUM(CASE WHEN log_source = 'web'
+                THEN 1 ELSE 0 END)                      as web_events,
+            SUM(CASE WHEN log_source = 'fim'
+                THEN 1 ELSE 0 END)                      as fim_events
         FROM events
     """)
 
@@ -219,7 +318,7 @@ def query_events_summary() -> dict:
 
 
 def query_top_attacking_ips(limit: int = 10) -> list[dict]:
-    """Top IPs con más intentos fallidos."""
+    """Top IPs con más intentos fallidos (ssh) o solicitudes maliciosas (web)."""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -250,27 +349,29 @@ if __name__ == "__main__":
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s"
     )
 
-    from pathlib import Path
-    from engine.parsers.auth_parser import parse_log_file
+    from engine.agents import SIMULATED_AGENTS
+    from engine.log_generator import run_generator
+    from engine.pipeline import ingest_agent_logs
     from engine.detectors.rules import DetectionEngine
 
-    # 1. Inicializar DB
+    # 1. Inicializar DB y registrar agentes
     initialize_db()
+    register_agents(SIMULATED_AGENTS)
 
-    # 2. Parsear logs
-    raw_files = sorted(Path("logs/raw").glob("auth_log_*.log"))
-    if not raw_files:
-        logger.error("No hay logs — corre primero el generador")
-        exit(1)
-
-    events, _ = parse_log_file(raw_files[-1])
+    # 2. Generar + parsear logs de todos los agentes
+    generated = run_generator(agents=SIMULATED_AGENTS)
+    all_events = []
+    for agent, source, filepath in generated:
+        events, _ = ingest_agent_logs(agent, source, filepath)
+        all_events.extend(events)
+        touch_agent(agent.agent_id)
 
     # 3. Detectar amenazas
     engine = DetectionEngine()
-    alerts = engine.run_all_rules(events)
+    alerts = engine.run_all_rules(all_events)
 
     # 4. Guardar en DB
-    insert_events(events)
+    insert_events(all_events)
     insert_alerts(alerts)
 
     # 5. Verificar resultados
@@ -284,6 +385,8 @@ if __name__ == "__main__":
     print(f"  IPs únicas:        {summary['unique_ips']}")
     print(f"  Logins fallidos:   {summary['failed_logins']}")
     print(f"  Logins exitosos:   {summary['successful_logins']}")
+    print(f"  Eventos web:       {summary['web_events']}")
+    print(f"  Eventos FIM:       {summary['fim_events']}")
     print(f"  Alertas totales:   {summary['total_alerts']}")
     print(f"  Críticas:          {summary['critical']}")
     print(f"  Altas:             {summary['high']}")

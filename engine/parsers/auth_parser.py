@@ -2,7 +2,7 @@ import re
 import logging
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -11,21 +11,26 @@ logger = logging.getLogger(__name__)
 @dataclass
 class LogEvent:
     """
-    Estructura normalizada de un evento de log.
-    Cada campo tiene un tipo definido — no dicts sueltos.
-    Esto es lo que va a la base de datos.
+    Estructura normalizada de un evento de log — compartida por las
+    3 fuentes soportadas (ssh, web, fim). Cada fuente llena los campos
+    comunes (timestamp, hostname, source_ip, username...) y guarda sus
+    campos propios en `metadata` (ej. path/status_code para web,
+    file_path/hash para fim). Esto es lo que va a la base de datos.
     """
     raw_line:       str
     timestamp:      Optional[str]
     hostname:       Optional[str]
     service:        Optional[str]
     pid:            Optional[int]
-    event_type:     Optional[str]   # accepted, failed, invalid_user, sudo
+    event_type:     Optional[str]   # accepted, failed, invalid_user, sudo, http_request, fim_*
     username:       Optional[str]
     source_ip:      Optional[str]
     source_port:    Optional[int]
     command:        Optional[str]   # solo para eventos sudo
     parsed_at:      str = ""
+    agent_id:       Optional[str] = None
+    log_source:     str = "ssh"     # "ssh" | "web" | "fim"
+    metadata:       dict = field(default_factory=dict)
 
     def __post_init__(self):
         self.parsed_at = datetime.now().isoformat()

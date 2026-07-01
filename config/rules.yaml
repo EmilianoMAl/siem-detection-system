@@ -1,0 +1,45 @@
+# Configuración del ruleset de SENTINEL.
+# Editar estos valores no requiere tocar código — el motor de detección
+# (engine/detectors/rules.py) los lee vía engine/config.py.
+
+ssh_brute_force:
+  fail_threshold: 5          # intentos fallidos desde 1 IP para disparar la alerta
+  critical_threshold: 20     # a partir de aquí la severidad sube a CRITICAL
+
+suspicious_sudo:
+  patterns:
+    - "/etc/shadow"
+    - "/etc/passwd"
+    - "chmod 777"
+    - "/tmp/"
+    - ">& /dev/tcp"
+    - "wget http"
+    - "curl http"
+    - "python3 -c"
+    - "pty.spawn"
+    - "base64 -d"
+    - "nc -e"
+    - "bash -i"
+
+web_attack:
+  patterns:
+    - "union select"
+    - "' or '1'='1"
+    - "<script"
+    - "../../"
+    - "etc/passwd"
+    - "drop table"
+    - "; exec"
+    - "onerror="
+
+recon_scan:
+  distinct_paths_threshold: 10   # paths distintos desde 1 IP en la ventana
+  not_found_threshold: 8         # respuestas 404 desde 1 IP en la ventana
+
+fim_critical_change:
+  critical_paths:
+    - "/etc/passwd"
+    - "/etc/shadow"
+    - "/etc/ssh/sshd_config"
+    - "/root/.ssh/authorized_keys"
+    - "/home/*/.ssh/authorized_keys"
