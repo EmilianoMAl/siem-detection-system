@@ -33,12 +33,29 @@ def initialize_db() -> None:
     Crea las tablas si no existen.
     Idempotente — seguro de correr múltiples veces.
 
-    NOTA: si vienes de una versión anterior de SENTINEL (sin agentes/
-    multi-fuente), borra data/siem.db una vez — el esquema cambió y
-    no se escribió una migración para datos de demo locales.
+    Si la DB viene de una versión anterior de SENTINEL (sin agentes/
+    multi-fuente), `events`/`alerts` existen pero con el esquema viejo
+    (sin agent_id/log_source/metadata). Como son datos de demo
+    regenerables y en despliegues como Streamlit Cloud no hay forma de
+    borrar el archivo a mano, se detecta y se recrean automáticamente
+    en vez de fallar al crear los índices nuevos.
     """
     conn = get_connection()
     cursor = conn.cursor()
+
+    tables = {row[0] for row in cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+
+    if "events" in tables:
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(events)").fetchall()}
+        if "agent_id" not in columns:
+            logger.warning(
+                "Esquema de 'events' desactualizado (sin agent_id) — "
+                "recreando events/alerts con el esquema multi-agente"
+            )
+            cursor.executescript("DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS alerts;")
+            conn.commit()
 
     cursor.executescript("""
         CREATE TABLE IF NOT EXISTS events (
