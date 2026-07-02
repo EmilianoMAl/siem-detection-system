@@ -1,9 +1,23 @@
-# Desplegar SENTINEL en una VM propia (Hyper-V, gratis)
+# Desplegar SENTINEL en una VM propia (gratis)
 
-Esta guía monta SENTINEL en una máquina virtual Ubuntu Server corriendo en
-tu propia PC vía Hyper-V — cero costo, sin depender de Streamlit Cloud.
-Los mismos pasos (Docker + Nginx) sirven después en un VPS real si algún
-día quieres exponerlo a internet.
+Esta guía monta SENTINEL en una máquina virtual Ubuntu Server — cero costo,
+sin depender de Streamlit Cloud. Los pasos de red/creación de la VM (1-5)
+son específicos de dónde la hospedes; los de Docker/Nginx/hardening (6-10)
+son iguales sin importar el proveedor.
+
+**Dos rutas probadas:**
+- **Hyper-V local** (pasos 1-5 tal como están abajo) — requiere permisos
+  de administrador en Windows.
+- **Oracle Cloud Free Tier** (la que terminamos usando) — no requiere
+  admin local, corre en la nube con IP pública real. En vez de los pasos
+  1-5, crea una instancia Compute con shape `VM.Standard.A1.Flex` (Ampere,
+  Always Free hasta 4 OCPU/24GB), imagen Ubuntu 24.04, con tu llave SSH
+  pública pegada al crearla. Si el toggle de IP pública sale bloqueado al
+  crear la instancia (pasa en cuentas nuevas), créala sin IP, arráncala, y
+  asígnasela después desde la VNIC adjunta. Luego abre el puerto 80 en la
+  Security List de la VCN (Networking → Virtual Cloud Networks → tu VCN →
+  Security Lists → Default Security List → Add Ingress Rules → 0.0.0.0/0,
+  TCP, puerto 80).
 
 ---
 
@@ -120,6 +134,33 @@ Y la documentación interactiva de la API (Swagger):
 ```
 http://<ip-de-la-vm>/api/docs
 ```
+
+## 10. Hardening: doble capa de firewall
+
+`docker-compose.yml` publica `api` y `dashboard` en `127.0.0.1:8000`/
+`127.0.0.1:8501` (no en `0.0.0.0`) — solo Nginx, que corre en la misma
+VM, puede llegar a ellos. Esto es necesario porque **Docker inserta sus
+propias reglas de iptables para publicar puertos, y esas reglas pueden
+saltarse el firewall del sistema operativo** — publicar en `0.0.0.0` deja
+el puerto expuesto a internet sin importar qué diga `ufw`.
+
+Con eso resuelto, activa `ufw` como segunda capa (la primera es la
+Security List del proveedor cloud — en OCI, Networking → VCN → Security
+Lists → agregar regla de ingreso para el puerto que necesites):
+
+```bash
+sudo apt install -y ufw
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw --force enable
+sudo ufw status verbose
+```
+
+Verifica desde tu PC que 8000/8501 ya no respondan directo (deben dar
+timeout) y que el 80 siga funcionando normal.
 
 ---
 
