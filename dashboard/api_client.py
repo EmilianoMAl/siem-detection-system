@@ -11,6 +11,12 @@ def _get(path: str, params: dict | None = None):
     return response.json()
 
 
+def _patch(path: str, body: dict):
+    response = requests.patch(f"{API_URL}{path}", json=body, timeout=TIMEOUT)
+    response.raise_for_status()
+    return response.json()
+
+
 def get_health() -> dict:
     return _get("/health")
 
@@ -19,8 +25,12 @@ def get_summary(log_source: str = "ALL") -> dict:
     return _get("/summary", {"log_source": log_source})
 
 
-def get_alerts() -> list[dict]:
-    return _get("/alerts")
+def get_alerts(status: str | None = None) -> list[dict]:
+    return _get("/alerts", {"status": status} if status else None)
+
+
+def update_alert_status(alert_id: str, status: str, note: str | None = None) -> dict:
+    return _patch(f"/alerts/{alert_id}", {"status": status, "note": note})
 
 
 def get_agents() -> list[dict]:

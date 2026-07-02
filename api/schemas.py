@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 
@@ -26,6 +26,14 @@ class AlertResponse(BaseModel):
     recommendation: Optional[str] = None
     detected_at: Optional[str] = None
     evidence: Optional[str] = None  # JSON string, tal como se guarda en SQLite
+    status: str = "OPEN"
+    note: Optional[str] = None
+    resolved_at: Optional[str] = None
+
+
+class AlertStatusUpdate(BaseModel):
+    status: Literal["OPEN", "ACKNOWLEDGED", "CLOSED"]
+    note: Optional[str] = None
 
 
 class AgentResponse(BaseModel):

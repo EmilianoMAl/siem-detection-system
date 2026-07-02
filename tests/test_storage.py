@@ -169,3 +169,78 @@ def test_get_max_alert_counter_reads_highest_suffix():
     storage.insert_alerts([make_alert("ALERT-0001"), make_alert("ALERT-0042")])
 
     assert storage.get_max_alert_counter() == 42
+
+
+def test_new_alert_defaults_to_open_status():
+    storage.insert_alerts([make_alert("ALERT-0001")])
+
+    alerts = storage.query_alerts()
+
+    assert alerts[0]["status"] == "OPEN"
+    assert alerts[0]["resolved_at"] is None
+
+
+def test_update_alert_status_to_acknowledged():
+    storage.insert_alerts([make_alert("ALERT-0001")])
+
+    updated = storage.update_alert_status("ALERT-0001", "ACKNOWLEDGED", note="looking into it")
+
+    assert updated["status"] == "ACKNOWLEDGED"
+    assert updated["note"] == "looking into it"
+    assert updated["resolved_at"] is None
+
+
+def test_update_alert_status_to_closed_sets_resolved_at():
+    storage.insert_alerts([make_alert("ALERT-0001")])
+
+    updated = storage.update_alert_status("ALERT-0001", "CLOSED")
+
+    assert updated["status"] == "CLOSED"
+    assert updated["resolved_at"] is not None
+
+
+def test_update_alert_status_unknown_id_returns_none():
+    assert storage.update_alert_status("ALERT-9999", "CLOSED") is None
+
+
+def test_query_alerts_filters_by_status():
+    storage.insert_alerts([make_alert("ALERT-0001"), make_alert("ALERT-0002")])
+    storage.update_alert_status("ALERT-0002", "CLOSED")
+
+    open_alerts = storage.query_alerts(status="OPEN")
+    closed_alerts = storage.query_alerts(status="CLOSED")
+
+    assert [a["alert_id"] for a in open_alerts] == ["ALERT-0001"]
+    assert [a["alert_id"] for a in closed_alerts] == ["ALERT-0002"]
+
+
+def test_additive_migration_preserves_existing_alerts(tmp_path, monkeypatch):
+    """
+    A diferencia de la migración destructiva de 'events', 'alerts' con
+    datos reales no se puede recrear -- initialize_db() debe agregar las
+    columnas nuevas sin perder filas existentes.
+    """
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "legacy.db")
+    conn = storage.get_connection()
+    conn.executescript("""
+        CREATE TABLE alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alert_id TEXT UNIQUE NOT NULL,
+            rule_name TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            description TEXT, source_ip TEXT, username TEXT, hostname TEXT,
+            evidence TEXT, recommendation TEXT, mitre_technique TEXT,
+            detected_at TEXT, created_at TEXT DEFAULT (datetime('now'))
+        );
+        INSERT INTO alerts (alert_id, rule_name, severity)
+            VALUES ('ALERT-0001', 'SSH_BRUTE_FORCE', 'HIGH');
+    """)
+    conn.commit()
+    conn.close()
+
+    storage.initialize_db()
+
+    alerts = storage.query_alerts()
+    assert len(alerts) == 1
+    assert alerts[0]["alert_id"] == "ALERT-0001"
+    assert alerts[0]["status"] == "OPEN"

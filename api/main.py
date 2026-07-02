@@ -20,12 +20,13 @@ from engine.storage import (
     save_dashboard, update_dashboard, list_dashboards,
     get_dashboard, delete_dashboard,
     insert_events, insert_alerts, touch_agent, get_max_alert_counter,
+    update_alert_status,
 )
 from api.schemas import (
     SummaryResponse, AlertResponse, AgentResponse,
     TopIpResponse, EventTypeResponse, TimelinePointResponse, HealthResponse,
     QueryPointResponse, DashboardSummary, DashboardDetail, DashboardSaveRequest,
-    IngestRequest, IngestResponse,
+    IngestRequest, IngestResponse, AlertStatusUpdate,
 )
 
 logging.basicConfig(
@@ -99,9 +100,20 @@ def get_summary(log_source: LogSource = "ALL") -> dict:
     return query_summary(log_source)
 
 
+AlertStatus = Literal["OPEN", "ACKNOWLEDGED", "CLOSED"]
+
+
 @router.get("/alerts", response_model=list[AlertResponse])
-def get_alerts() -> list[dict]:
-    return query_alerts(limit=500)
+def get_alerts(status: AlertStatus | None = None) -> list[dict]:
+    return query_alerts(status=status, limit=500)
+
+
+@router.patch("/alerts/{alert_id}", response_model=AlertResponse)
+def patch_alert(alert_id: str, body: AlertStatusUpdate) -> dict:
+    updated = update_alert_status(alert_id, body.status, body.note)
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"Alerta no encontrada: {alert_id}")
+    return updated
 
 
 @router.get("/agents", response_model=list[AgentResponse])

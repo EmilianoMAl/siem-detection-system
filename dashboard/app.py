@@ -49,6 +49,15 @@ def load_alerts():
     return alerts
 
 
+def act_on_alert(alert_id: str, status: str):
+    # Se usa como on_click de un st.button — Streamlit ya rehace el
+    # render solo después de que el callback termina, así que basta con
+    # invalidar el cache aquí (nada de st.rerun(), Streamlit lo desaconseja
+    # dentro de un callback).
+    api_client.update_alert_status(alert_id, status)
+    load_alerts.clear()
+
+
 @st.cache_data(ttl=30)
 def load_top_ips(source: str):
     rows = api_client.get_top_ips(source)
@@ -86,6 +95,7 @@ with st.sidebar:
         "Log Source", ["ALL", "SSH", "WEB", "FIM"],
         label_visibility="collapsed"
     )
+    show_closed = st.checkbox("Show closed alerts", value=False)
 
     st.markdown("---")
     st.markdown('<div class="section-label">System status</div>', unsafe_allow_html=True)
@@ -171,6 +181,8 @@ with col_alerts:
     st.markdown('<div class="section-label">Active threat feed</div>', unsafe_allow_html=True)
     alerts = load_alerts()
     filtered = alerts
+    if not show_closed:
+        filtered = [a for a in filtered if a.get("status", "OPEN") != "CLOSED"]
     if severity_filter != "ALL":
         filtered = [a for a in filtered if a["severity"] == severity_filter]
     if source_filter != "ALL":
@@ -181,6 +193,7 @@ with col_alerts:
     else:
         for alert in filtered[:8]:
             sev = alert["severity"]
+            status = alert.get("status", "OPEN")
             sev_class = SEVERITY_CLASS.get(sev, "sev-low")
             ip_html = f"<span class='chip'>{alert['source_ip']}</span>" if alert["source_ip"] else ""
             mitre_html = (
@@ -188,23 +201,34 @@ with col_alerts:
                 if alert["mitre_technique"] else ""
             )
             source_html = f"<span class='chip'>{alert['source'].upper()}</span>"
-            st.markdown(f"""
-            <div class='alert-card'>
-                <div style='display:flex;align-items:center;gap:8px;margin-bottom:8px'>
-                    <span class='sev-pill {sev_class}'>{sev}</span>
-                    <span style='color:#F1F0EE;font-size:0.85rem;font-weight:600'>
-                        {alert['rule_name']}
-                    </span>
-                    <span class='muted-text' style='margin-left:auto'>{alert['alert_id']}</span>
+            status_html = f"<span class='chip'>{status}</span>" if status != "OPEN" else ""
+
+            card_col, action_col = st.columns([6, 1])
+            with card_col:
+                st.markdown(f"""
+                <div class='alert-card'>
+                    <div style='display:flex;align-items:center;gap:8px;margin-bottom:8px'>
+                        <span class='sev-pill {sev_class}'>{sev}</span>
+                        <span style='color:#F1F0EE;font-size:0.85rem;font-weight:600'>
+                            {alert['rule_name']}
+                        </span>
+                        <span class='muted-text' style='margin-left:auto'>{alert['alert_id']}</span>
+                    </div>
+                    <div class='muted-text' style='margin-bottom:10px;line-height:1.5'>
+                        {alert['description'][:120]}...
+                    </div>
+                    <div style='display:flex;gap:8px;flex-wrap:wrap'>
+                        {source_html} {ip_html} {mitre_html} {status_html}
+                    </div>
                 </div>
-                <div class='muted-text' style='margin-bottom:10px;line-height:1.5'>
-                    {alert['description'][:120]}...
-                </div>
-                <div style='display:flex;gap:8px;flex-wrap:wrap'>
-                    {source_html} {ip_html} {mitre_html}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+            with action_col:
+                if status == "OPEN":
+                    st.button("Ack", key=f"ack_{alert['alert_id']}",
+                              on_click=act_on_alert, args=(alert["alert_id"], "ACKNOWLEDGED"))
+                if status in ("OPEN", "ACKNOWLEDGED"):
+                    st.button("Close", key=f"close_{alert['alert_id']}",
+                              on_click=act_on_alert, args=(alert["alert_id"], "CLOSED"))
 
 with col_ips:
     st.markdown('<div class="section-label">Top attacking IPs</div>', unsafe_allow_html=True)

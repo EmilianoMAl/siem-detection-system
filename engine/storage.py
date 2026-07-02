@@ -60,6 +60,20 @@ def initialize_db() -> None:
             cursor.executescript("DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS alerts;")
             conn.commit()
 
+    if "alerts" in tables:
+        # A diferencia de 'events', 'alerts' puede tener datos reales
+        # valiosos (alertas del agente real) — nunca se recrea, solo se
+        # le agregan columnas nuevas de forma aditiva si faltan.
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(alerts)").fetchall()}
+        if "status" not in columns:
+            logger.info("Agregando columnas de gestión de alertas (status/note/resolved_at)")
+            cursor.executescript("""
+                ALTER TABLE alerts ADD COLUMN status TEXT DEFAULT 'OPEN';
+                ALTER TABLE alerts ADD COLUMN note TEXT;
+                ALTER TABLE alerts ADD COLUMN resolved_at TEXT;
+            """)
+            conn.commit()
+
     cursor.executescript("""
         CREATE TABLE IF NOT EXISTS events (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,6 +106,9 @@ def initialize_db() -> None:
             recommendation  TEXT,
             mitre_technique TEXT,
             detected_at     TEXT,
+            status          TEXT DEFAULT 'OPEN',  -- OPEN | ACKNOWLEDGED | CLOSED
+            note            TEXT,
+            resolved_at     TEXT,
             created_at      TEXT DEFAULT (datetime('now'))
         );
 
@@ -298,29 +315,64 @@ def query_agents() -> list[dict]:
 
 def query_alerts(
     severity: Optional[str] = None,
+    status: Optional[str] = None,
     limit: int = 100
 ) -> list[dict]:
-    """Consulta alertas con filtro opcional por severidad."""
+    """Consulta alertas con filtro opcional por severidad y/o estado."""
     conn = get_connection()
     cursor = conn.cursor()
 
+    where_clauses = []
+    params: list = []
     if severity:
-        cursor.execute("""
-            SELECT * FROM alerts
-            WHERE severity = ?
-            ORDER BY detected_at DESC
-            LIMIT ?
-        """, (severity, limit))
-    else:
-        cursor.execute("""
-            SELECT * FROM alerts
-            ORDER BY detected_at DESC
-            LIMIT ?
-        """, (limit,))
+        where_clauses.append("severity = ?")
+        params.append(severity)
+    if status:
+        where_clauses.append("status = ?")
+        params.append(status)
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+    cursor.execute(f"""
+        SELECT * FROM alerts
+        {where_sql}
+        ORDER BY detected_at DESC
+        LIMIT ?
+    """, (*params, limit))
 
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows
+
+
+def update_alert_status(alert_id: str, status: str, note: Optional[str] = None) -> Optional[dict]:
+    """
+    Cambia el estado de una alerta (OPEN/ACKNOWLEDGED/CLOSED). Al cerrarla
+    se registra resolved_at. Retorna la alerta actualizada, o None si el
+    alert_id no existe.
+    """
+    conn = get_connection()
+
+    if status == "CLOSED":
+        cursor = conn.execute(
+            """UPDATE alerts SET status = ?, note = COALESCE(?, note),
+               resolved_at = datetime('now') WHERE alert_id = ?""",
+            (status, note, alert_id),
+        )
+    else:
+        cursor = conn.execute(
+            "UPDATE alerts SET status = ?, note = COALESCE(?, note) WHERE alert_id = ?",
+            (status, note, alert_id),
+        )
+    conn.commit()
+
+    if cursor.rowcount == 0:
+        conn.close()
+        return None
+
+    row = conn.execute("SELECT * FROM alerts WHERE alert_id = ?", (alert_id,)).fetchone()
+    conn.close()
+    return dict(row)
 
 
 def query_events_summary() -> dict:
