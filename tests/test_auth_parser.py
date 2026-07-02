@@ -49,3 +49,50 @@ def test_parse_malformed_line_returns_none():
 
 def test_parse_empty_line_returns_none():
     assert parse_line("   ") is None
+
+
+def test_parse_accepted_password_with_iso_timestamp():
+    # Formato real de /var/log/auth.log en Ubuntu 24.04+ (rsyslog moderno),
+    # distinto al syslog clásico que usa nuestro generador sintético.
+    line = "2026-07-02T18:17:49.548734+00:00 sentinel-vm sshd[3336]: Accepted password for ubuntu from 200.66.80.91 port 47141 ssh2"
+    event = parse_line(line)
+
+    assert event is not None
+    assert event.event_type == "accepted_password"
+    assert event.username == "ubuntu"
+    assert event.hostname == "sentinel-vm"
+
+
+def test_parse_accepted_publickey():
+    line = ("2026-07-02T18:17:49.548734+00:00 sentinel-vm sshd[3336]: "
+            "Accepted publickey for ubuntu from 200.66.80.91 port 47141 ssh2: ED25519 SHA256:abc")
+    event = parse_line(line)
+
+    assert event is not None
+    assert event.event_type == "accepted_publickey"
+    assert event.username == "ubuntu"
+    assert event.source_ip == "200.66.80.91"
+
+
+def test_parse_ssh_preauth_disconnect():
+    # Este es el patrón más común de bots escaneando el puerto 22 sin
+    # siquiera llegar a un intento de password.
+    line = ("2026-07-02T18:20:10.128633+00:00 sentinel-vm sshd[3828]: "
+            "Connection closed by authenticating user root 140.84.190.45 port 53534 [preauth]")
+    event = parse_line(line)
+
+    assert event is not None
+    assert event.event_type == "ssh_preauth_disconnect"
+    assert event.username == "root"
+    assert event.source_ip == "140.84.190.45"
+
+
+def test_parse_real_sudo_format_without_pid():
+    # El sudo real de Ubuntu 24.04 no trae [PID] y puede omitir TTY=.
+    line = "2026-07-02T03:50:37.029127+00:00 sentinel-vm sudo:     root : PWD=/ ; USER=root ; COMMAND=/usr/bin/apt-get update"
+    event = parse_line(line)
+
+    assert event is not None
+    assert event.event_type == "sudo_command"
+    assert event.username == "root"
+    assert event.command == "/usr/bin/apt-get update"

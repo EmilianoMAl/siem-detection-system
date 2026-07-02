@@ -169,7 +169,9 @@ hr { border-color: var(--border) !important; }
 EVENT_COLORS = {
     "failed_password":   "#F0685E",
     "accepted_password": "#5FD09A",
+    "accepted_publickey": "#4FBF8F",
     "invalid_user":       "#E5A63C",
+    "ssh_preauth_disconnect": "#C97A3D",
     "sudo_command":       "#8C7AE0",
     "http_request":       "#5B8CF0",
     "fim_modified":        "#D98E3B",

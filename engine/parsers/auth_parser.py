@@ -41,18 +41,33 @@ class LogEvent:
 
 # --- Patrones regex para cada tipo de evento ---
 # Estos patrones son los mismos que usan herramientas como Logstash y Graylog
+#
+# El timestamp soporta dos formatos: el syslog clásico que usa nuestro
+# generador sintético ("Apr 03 10:23:45") y el ISO8601 con que rsyslog
+# escribe /var/log/auth.log de verdad en Ubuntu 24.04+
+# ("2026-07-02T18:17:49.548734+00:00") — sin esto, CERO líneas reales
+# hacían match, sin importar qué tan bien formado estuviera el resto.
+TIMESTAMP = r"(?P<timestamp>\w+\s+\d+\s[\d:]+|\d{4}-\d{2}-\d{2}T[\d:.]+(?:[+-]\d{2}:\d{2})?)"
 
 PATTERNS = {
     "accepted_password": re.compile(
-        r"(?P<timestamp>\w+\s+\d+\s[\d:]+)\s"
+        TIMESTAMP + r"\s"
         r"(?P<hostname>\S+)\s"
         r"(?P<service>sshd)\[(?P<pid>\d+)\]:\s"
         r"Accepted password for (?P<username>\S+)\s"
         r"from (?P<source_ip>[\d.]+)\s"
         r"port (?P<source_port>\d+)"
     ),
+    "accepted_publickey": re.compile(
+        TIMESTAMP + r"\s"
+        r"(?P<hostname>\S+)\s"
+        r"(?P<service>sshd)\[(?P<pid>\d+)\]:\s"
+        r"Accepted publickey for (?P<username>\S+)\s"
+        r"from (?P<source_ip>[\d.]+)\s"
+        r"port (?P<source_port>\d+)"
+    ),
     "failed_password": re.compile(
-        r"(?P<timestamp>\w+\s+\d+\s[\d:]+)\s"
+        TIMESTAMP + r"\s"
         r"(?P<hostname>\S+)\s"
         r"(?P<service>sshd)\[(?P<pid>\d+)\]:\s"
         r"Failed password for (?P<username>\S+)\s"
@@ -60,18 +75,26 @@ PATTERNS = {
         r"port (?P<source_port>\d+)"
     ),
     "invalid_user": re.compile(
-        r"(?P<timestamp>\w+\s+\d+\s[\d:]+)\s"
+        TIMESTAMP + r"\s"
         r"(?P<hostname>\S+)\s"
         r"(?P<service>sshd)\[(?P<pid>\d+)\]:\s"
         r"Invalid user (?P<username>\S+)\s"
         r"from (?P<source_ip>[\d.]+)\s"
         r"port (?P<source_port>\d+)"
     ),
-    "sudo_command": re.compile(
-        r"(?P<timestamp>\w+\s+\d+\s[\d:]+)\s"
+    "ssh_preauth_disconnect": re.compile(
+        TIMESTAMP + r"\s"
         r"(?P<hostname>\S+)\s"
-        r"(?P<service>sudo)\[(?P<pid>\d+)\]:\s"
-        r"(?P<username>\S+)\s.*COMMAND=(?P<command>.+)"
+        r"(?P<service>sshd)\[(?P<pid>\d+)\]:\s"
+        r"(?:Connection closed by|Disconnected from) authenticating user (?P<username>\S+)\s"
+        r"(?P<source_ip>[\d.]+)\s"
+        r"port (?P<source_port>\d+)\s\[preauth\]"
+    ),
+    "sudo_command": re.compile(
+        TIMESTAMP + r"\s"
+        r"(?P<hostname>\S+)\s"
+        r"(?P<service>sudo)(?:\[(?P<pid>\d+)\])?:\s+"
+        r"(?P<username>\S+)\s*:.*COMMAND=(?P<command>.+)"
     ),
 }
 
