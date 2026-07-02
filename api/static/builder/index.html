@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sentinel — Builder</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10/dist/gridstack.min.css" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">Sentinel <span class="muted-text">/ Builder</span></div>
+
+  <div class="toolbar">
+    <select id="dashboard-select" class="input">
+      <option value="">— Nuevo dashboard —</option>
+    </select>
+    <input id="dashboard-name" class="input" type="text" placeholder="Nombre del dashboard" value="Mi dashboard" />
+    <button id="btn-add-widget" class="btn btn-accent">+ Widget</button>
+    <button id="btn-refresh" class="btn">Refrescar datos</button>
+    <button id="btn-save" class="btn btn-accent">Guardar</button>
+    <button id="btn-delete" class="btn btn-danger" style="display:none">Eliminar</button>
+    <a class="btn" href="/" target="_top">Volver al dashboard</a>
+  </div>
+</header>
+
+<main>
+  <div id="empty-state" class="empty-state">
+    <p>Lienzo vacío — dale click a <strong>"+ Widget"</strong> para agregar tu primera gráfica.</p>
+  </div>
+  <div class="grid-stack"></div>
+</main>
+
+<!-- Modal de configuración de widget -->
+<div id="widget-modal" class="modal-backdrop" style="display:none">
+  <div class="modal">
+    <h2>Configurar widget</h2>
+
+    <label>Título</label>
+    <input id="cfg-title" class="input" type="text" placeholder="Ej. Top IPs atacantes" />
+
+    <label>Fuente de datos</label>
+    <select id="cfg-dataset" class="input">
+      <option value="events">Eventos</option>
+      <option value="alerts">Alertas</option>
+    </select>
+
+    <div id="cfg-log-source-wrap">
+      <label>Filtrar por log source</label>
+      <select id="cfg-log-source" class="input">
+        <option value="ALL">Todas</option>
+        <option value="SSH">SSH</option>
+        <option value="WEB">Web</option>
+        <option value="FIM">FIM</option>
+      </select>
+    </div>
+
+    <div id="cfg-severity-wrap" style="display:none">
+      <label>Filtrar por severidad</label>
+      <select id="cfg-severity" class="input">
+        <option value="ALL">Todas</option>
+        <option value="CRITICAL">Critical</option>
+        <option value="HIGH">High</option>
+        <option value="MEDIUM">Medium</option>
+        <option value="LOW">Low</option>
+      </select>
+    </div>
+
+    <label>Agrupar por</label>
+    <select id="cfg-group-by" class="input"></select>
+
+    <label>Tipo de gráfica</label>
+    <select id="cfg-chart-type" class="input">
+      <option value="bar">Barras</option>
+      <option value="line">Líneas</option>
+      <option value="pie">Pastel</option>
+      <option value="number">Número (KPI)</option>
+    </select>
+
+    <label>Top N</label>
+    <input id="cfg-limit" class="input" type="number" min="1" max="50" value="10" />
+
+    <div class="modal-actions">
+      <button id="btn-cancel-widget" class="btn">Cancelar</button>
+      <button id="btn-confirm-widget" class="btn btn-accent">Agregar</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/gridstack@10/dist/gridstack-all.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

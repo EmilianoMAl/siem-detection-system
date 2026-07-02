@@ -91,6 +91,25 @@ un SIEM real.
 
 ---
 
+## 🧩 Custom Dashboard Builder
+
+Un lienzo de arrastrar-y-soltar (estilo Power BI/Tableau) para armar tus
+propias vistas — sin tocar código. Página estática propia servida por la
+API en `/builder/` (enlazada desde el sidebar del dashboard), construida
+con [GridStack.js](https://gridstack.github.io/gridstack.js/) para el
+grid y [Plotly.js](https://plotly.com/javascript/) para las gráficas.
+
+- Cada widget se configura eligiendo dataset (eventos/alertas), dimensión
+  para agrupar, filtros y tipo de gráfica (barras/líneas/pastel/KPI).
+- El endpoint `GET /query` (`engine/storage.py::query_generic`) resuelve
+  cualquier combinación dataset+dimensión contra un whitelist explícito de
+  columnas agrupables — nunca se interpola la dimensión elegida por el
+  usuario directo en SQL.
+- Los dashboards armados se guardan (`custom_dashboards` en SQLite) y se
+  pueden recargar después con su layout exacto (posición/tamaño por widget).
+
+---
+
 ## 🛠️ Tech Stack
 
 | Component | Technology |

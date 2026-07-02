@@ -117,6 +117,12 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown(
+        "<a href='/builder/' target='_blank' "
+        "style='color:#5B8CF0;text-decoration:none;font-size:0.78rem;font-weight:600'>"
+        "Custom Builder ↗</a>",
+        unsafe_allow_html=True
+    )
+    st.markdown(
         "<a href='https://github.com/EmilianoMAl/siem-detection-system' "
         "class='muted-text' style='text-decoration:none'>"
         "Source code ↗</a>",

@@ -39,6 +39,13 @@ with st.sidebar:
         "<div class='muted-text'>Agents — esta página</div>",
         unsafe_allow_html=True
     )
+    st.markdown("---")
+    st.markdown(
+        "<a href='/builder/' target='_blank' "
+        "style='color:#5B8CF0;text-decoration:none;font-size:0.78rem;font-weight:600'>"
+        "Custom Builder ↗</a>",
+        unsafe_allow_html=True
+    )
 
 st.markdown("""
 <h1 style='margin:0'>Agents</h1>

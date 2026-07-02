@@ -60,3 +60,28 @@ class TimelinePointResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+
+
+class QueryPointResponse(BaseModel):
+    label: Optional[str] = None
+    value: int
+
+
+class DashboardSummary(BaseModel):
+    id: int
+    name: str
+    created_at: str
+    updated_at: str
+
+
+class DashboardDetail(BaseModel):
+    id: int
+    name: str
+    layout: list[dict]
+    created_at: str
+    updated_at: str
+
+
+class DashboardSaveRequest(BaseModel):
+    name: str
+    layout: list[dict]

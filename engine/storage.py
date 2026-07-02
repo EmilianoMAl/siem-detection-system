@@ -105,6 +105,14 @@ def initialize_db() -> None:
             registered_at TEXT DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS custom_dashboards (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            name          TEXT NOT NULL,
+            layout        TEXT NOT NULL,   -- JSON: posiciones + config de cada widget
+            created_at    TEXT DEFAULT (datetime('now')),
+            updated_at    TEXT DEFAULT (datetime('now'))
+        );
+
         CREATE INDEX IF NOT EXISTS idx_events_source_ip
             ON events(source_ip);
 
@@ -465,6 +473,145 @@ def query_timeline(log_source: str = "ALL") -> list[dict]:
 
     conn.close()
     return [dict(row) for row in rows]
+
+
+# Dimensiones agrupables permitidas por dataset, mapeadas a la expresión
+# SQL real. Whitelist explícita: group_by llega desde una API HTTP pública
+# (el builder), nunca se interpola el valor del usuario directo en SQL.
+GENERIC_QUERY_DIMENSIONS = {
+    "events": {
+        "source_ip": "source_ip",
+        "username": "username",
+        "event_type": "event_type",
+        "hostname": "hostname",
+        "log_source": "log_source",
+        "agent_id": "agent_id",
+        "hour": "substr(timestamp, 1, 8)",
+    },
+    "alerts": {
+        "rule_name": "rule_name",
+        "severity": "severity",
+        "mitre_technique": "mitre_technique",
+        "source_ip": "source_ip",
+        "hostname": "hostname",
+    },
+}
+
+
+def query_generic(
+    dataset: str,
+    group_by: str,
+    log_source: str = "ALL",
+    severity: str = "ALL",
+    limit: int = 10,
+) -> list[dict]:
+    """
+    Consulta genérica para el builder de dashboards: agrupa `dataset`
+    (events|alerts) por `group_by` y cuenta filas. Forma de salida fija
+    ({label, value}) para que cualquier tipo de gráfica la pueda consumir
+    sin importar la dimensión elegida.
+
+    Lanza ValueError si dataset/group_by no están en el whitelist —
+    el caller (API) lo traduce a un 400.
+    """
+    dimensions = GENERIC_QUERY_DIMENSIONS.get(dataset)
+    if dimensions is None:
+        raise ValueError(f"dataset inválido: {dataset}")
+
+    column_expr = dimensions.get(group_by)
+    if column_expr is None:
+        raise ValueError(f"group_by inválido para '{dataset}': {group_by}")
+
+    conn = get_connection()
+    where_clauses = []
+    params: list = []
+
+    if dataset == "events":
+        clause, source_params = _log_source_clause(log_source)
+        if clause:
+            where_clauses.append(clause.replace("AND ", "", 1))
+            params.extend(source_params)
+    elif dataset == "alerts" and severity != "ALL":
+        where_clauses.append("severity = ?")
+        params.append(severity)
+
+    where_clauses.append(f"{column_expr} IS NOT NULL")
+    where_sql = f"WHERE {' AND '.join(where_clauses)}"
+
+    rows = conn.execute(f"""
+        SELECT {column_expr} as label, COUNT(*) as value
+        FROM {dataset}
+        {where_sql}
+        GROUP BY label
+        ORDER BY value DESC
+        LIMIT ?
+    """, (*params, limit)).fetchall()
+
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def save_dashboard(name: str, layout: list) -> int:
+    """Crea un dashboard nuevo. Retorna su id."""
+    conn = get_connection()
+    cursor = conn.execute(
+        "INSERT INTO custom_dashboards (name, layout) VALUES (?, ?)",
+        (name, json.dumps(layout)),
+    )
+    conn.commit()
+    dashboard_id = cursor.lastrowid
+    conn.close()
+    return dashboard_id
+
+
+def update_dashboard(dashboard_id: int, name: str, layout: list) -> bool:
+    """Actualiza un dashboard existente. Retorna False si no existe."""
+    conn = get_connection()
+    cursor = conn.execute(
+        """UPDATE custom_dashboards
+           SET name = ?, layout = ?, updated_at = datetime('now')
+           WHERE id = ?""",
+        (name, json.dumps(layout), dashboard_id),
+    )
+    conn.commit()
+    updated = cursor.rowcount > 0
+    conn.close()
+    return updated
+
+
+def list_dashboards() -> list[dict]:
+    """Lista los dashboards guardados (sin el layout completo, solo metadata)."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, name, created_at, updated_at FROM custom_dashboards ORDER BY updated_at DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_dashboard(dashboard_id: int) -> Optional[dict]:
+    """Obtiene un dashboard completo (con su layout). None si no existe."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, name, layout, created_at, updated_at FROM custom_dashboards WHERE id = ?",
+        (dashboard_id,),
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    d = dict(row)
+    d["layout"] = json.loads(d["layout"])
+    return d
+
+
+def delete_dashboard(dashboard_id: int) -> bool:
+    """Elimina un dashboard. Retorna False si no existía."""
+    conn = get_connection()
+    cursor = conn.execute("DELETE FROM custom_dashboards WHERE id = ?", (dashboard_id,))
+    conn.commit()
+    deleted = cursor.rowcount > 0
+    conn.close()
+    return deleted
 
 
 if __name__ == "__main__":
