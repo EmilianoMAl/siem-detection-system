@@ -124,8 +124,20 @@ simulados — tarda unos segundos, lo verás en los logs.
 
 ## 8. Instalar y configurar Nginx
 
+`deploy/nginx/sentinel.conf` protege todo el sitio con usuario/contraseña
+(`auth_basic`) — hay que crear ese archivo de credenciales **antes** de
+activar la configuración, si no Nginx no arranca:
+
 ```bash
-sudo apt install -y nginx
+sudo apt install -y nginx apache2-utils
+sudo htpasswd -bc /etc/nginx/.htpasswd <tu-usuario> '<tu-contraseña>'
+sudo chmod 640 /etc/nginx/.htpasswd
+sudo chown root:www-data /etc/nginx/.htpasswd
+```
+
+Ahora sí, activa el sitio:
+
+```bash
 sudo cp deploy/nginx/sentinel.conf /etc/nginx/sites-available/sentinel
 sudo ln -s /etc/nginx/sites-available/sentinel /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
@@ -133,7 +145,19 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
+Para agregar o cambiar un usuario después (sin el `-c`, que borraría los
+que ya había):
+```bash
+sudo htpasswd -b /etc/nginx/.htpasswd <usuario> '<contraseña-nueva>'
+sudo systemctl reload nginx
+```
+
+> `/etc/nginx/.htpasswd` vive solo en la VM — nunca se commitea al repo.
+
 ## 9. Abrir SENTINEL desde tu PC
+
+Te va a pedir usuario y contraseña (el `auth_basic` del paso anterior)
+antes de mostrar cualquier página.
 
 En el navegador de tu PC (el host, no la VM):
 ```
