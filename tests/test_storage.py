@@ -244,3 +244,22 @@ def test_additive_migration_preserves_existing_alerts(tmp_path, monkeypatch):
     assert len(alerts) == 1
     assert alerts[0]["alert_id"] == "ALERT-0001"
     assert alerts[0]["status"] == "OPEN"
+
+
+def test_query_mitre_coverage_groups_by_technique_id():
+    storage.insert_alerts([
+        make_alert("ALERT-0001"),  # mitre_technique="T1110" por default de make_alert
+        make_alert("ALERT-0002"),
+    ])
+
+    coverage = storage.query_mitre_coverage()
+
+    assert coverage == [{"technique_id": "T1110", "count": 2}]
+
+
+def test_query_mitre_coverage_ignores_missing_technique():
+    alert = make_alert("ALERT-0001")
+    alert.mitre_technique = ""
+    storage.insert_alerts([alert])
+
+    assert storage.query_mitre_coverage() == []

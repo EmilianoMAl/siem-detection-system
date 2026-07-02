@@ -47,3 +47,7 @@ def get_event_types(log_source: str = "ALL") -> list[dict]:
 
 def get_timeline(log_source: str = "ALL") -> list[dict]:
     return _get("/timeline", {"log_source": log_source})
+
+
+def get_mitre_coverage() -> list[dict]:
+    return _get("/mitre-coverage")

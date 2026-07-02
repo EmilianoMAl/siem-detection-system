@@ -70,6 +70,13 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class MitreTechniqueResponse(BaseModel):
+    tactic: str
+    technique_id: str
+    technique_name: str
+    count: int
+
+
 class QueryPointResponse(BaseModel):
     label: Optional[str] = None
     value: int

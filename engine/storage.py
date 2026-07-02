@@ -375,6 +375,29 @@ def update_alert_status(alert_id: str, status: str, note: Optional[str] = None) 
     return dict(row)
 
 
+def query_mitre_coverage() -> list[dict]:
+    """
+    Cuenta alertas por técnica MITRE. mitre_technique se guarda como
+    "T1110 - Brute Force" — se separa en el primer " - " para quedarnos
+    solo con el ID, que es lo que se compara contra MITRE_REFERENCE.
+    """
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT mitre_technique, COUNT(*) as n
+        FROM alerts
+        WHERE mitre_technique IS NOT NULL AND mitre_technique != ''
+        GROUP BY mitre_technique
+    """).fetchall()
+    conn.close()
+
+    counts: dict[str, int] = {}
+    for row in rows:
+        technique_id = row["mitre_technique"].split(" - ", 1)[0]
+        counts[technique_id] = counts.get(technique_id, 0) + row["n"]
+
+    return [{"technique_id": tid, "count": n} for tid, n in counts.items()]
+
+
 def query_events_summary() -> dict:
     """Resumen estadístico de eventos para el dashboard."""
     conn = get_connection()

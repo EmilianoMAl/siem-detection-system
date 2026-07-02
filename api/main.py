@@ -12,11 +12,12 @@ from fastapi.staticfiles import StaticFiles
 from engine.agents import find_known_agent
 from engine.bootstrap import bootstrap_data, simulate_tick
 from engine.detectors.rules import DetectionEngine
+from engine.mitre_reference import MITRE_REFERENCE
 from engine.pipeline import ingest_lines, LINE_PARSERS
 from engine.storage import (
     query_summary, query_alerts, query_agents,
     query_top_ips, query_event_types, query_timeline,
-    query_generic, GENERIC_QUERY_DIMENSIONS,
+    query_generic, GENERIC_QUERY_DIMENSIONS, query_mitre_coverage,
     save_dashboard, update_dashboard, list_dashboards,
     get_dashboard, delete_dashboard,
     insert_events, insert_alerts, touch_agent, get_max_alert_counter,
@@ -26,7 +27,7 @@ from api.schemas import (
     SummaryResponse, AlertResponse, AgentResponse,
     TopIpResponse, EventTypeResponse, TimelinePointResponse, HealthResponse,
     QueryPointResponse, DashboardSummary, DashboardDetail, DashboardSaveRequest,
-    IngestRequest, IngestResponse, AlertStatusUpdate,
+    IngestRequest, IngestResponse, AlertStatusUpdate, MitreTechniqueResponse,
 )
 
 logging.basicConfig(
@@ -140,6 +141,20 @@ def get_timeline(log_source: LogSource = "ALL") -> list[dict]:
 def get_query_dimensions() -> dict:
     """Dimensiones agrupables válidas por dataset — el builder las usa para poblar sus selects."""
     return {dataset: list(dims.keys()) for dataset, dims in GENERIC_QUERY_DIMENSIONS.items()}
+
+
+@router.get("/mitre-coverage", response_model=list[MitreTechniqueResponse])
+def get_mitre_coverage() -> list[dict]:
+    counts = {row["technique_id"]: row["count"] for row in query_mitre_coverage()}
+    return [
+        {
+            "tactic": tactic,
+            "technique_id": technique_id,
+            "technique_name": technique_name,
+            "count": counts.get(technique_id, 0),
+        }
+        for tactic, technique_id, technique_name in MITRE_REFERENCE
+    ]
 
 
 @router.get("/query", response_model=list[QueryPointResponse])

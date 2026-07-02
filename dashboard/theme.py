@@ -161,6 +161,47 @@ hr { border-color: var(--border) !important; }
     color: var(--text-faint);
     font-size: 0.78rem;
 }
+
+/* ── MITRE COVERAGE BOARD ── */
+.mitre-tactic-label {
+    color: var(--text-muted);
+    font-weight: 650;
+    font-size: 0.78rem;
+    margin: 18px 0 8px;
+}
+.mitre-cell {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 108px;
+    padding: 8px 10px;
+    margin: 0 8px 8px 0;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    vertical-align: top;
+}
+.mitre-cell .id {
+    font-size: 0.68rem;
+    color: var(--text-faint);
+    font-weight: 650;
+}
+.mitre-cell .name {
+    font-size: 0.68rem;
+    color: var(--text-faint);
+    line-height: 1.3;
+}
+.mitre-cell-hit {
+    border-color: var(--accent);
+    background: rgba(91,140,240,0.14);
+}
+.mitre-cell-hit .id { color: var(--accent); }
+.mitre-cell-hit .name { color: var(--text); }
+.mitre-cell-hit .count {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text);
+}
 </style>
 """
 
