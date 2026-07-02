@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: api/Dockerfile
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data
     restart: unless-stopped
@@ -14,7 +14,7 @@ services:
       context: .
       dockerfile: dashboard/Dockerfile
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     environment:
       - SENTINEL_API_URL=http://api:8000
     depends_on:
