@@ -48,10 +48,10 @@ class DetectionEngine:
     igual que el ruleset de un SIEM real.
     """
 
-    def __init__(self, config: Optional[dict] = None):
+    def __init__(self, config: Optional[dict] = None, start_counter: int = 0):
         self.config = config or load_rules_config()
         self.alerts: list[Alert] = []
-        self._alert_counter = 0
+        self._alert_counter = start_counter
 
     def _new_alert_id(self) -> str:
         self._alert_counter += 1

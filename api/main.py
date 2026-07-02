@@ -1,23 +1,31 @@
+import asyncio
+import hmac
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
 
-from engine.bootstrap import bootstrap_data
+from engine.agents import find_known_agent
+from engine.bootstrap import bootstrap_data, simulate_tick
+from engine.detectors.rules import DetectionEngine
+from engine.pipeline import ingest_lines, LINE_PARSERS
 from engine.storage import (
     query_summary, query_alerts, query_agents,
     query_top_ips, query_event_types, query_timeline,
     query_generic, GENERIC_QUERY_DIMENSIONS,
     save_dashboard, update_dashboard, list_dashboards,
     get_dashboard, delete_dashboard,
+    insert_events, insert_alerts, touch_agent, get_max_alert_counter,
 )
 from api.schemas import (
     SummaryResponse, AlertResponse, AgentResponse,
     TopIpResponse, EventTypeResponse, TimelinePointResponse, HealthResponse,
     QueryPointResponse, DashboardSummary, DashboardDetail, DashboardSaveRequest,
+    IngestRequest, IngestResponse,
 )
 
 logging.basicConfig(
@@ -32,12 +40,34 @@ Dataset = Literal["events", "alerts"]
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+INGEST_TOKEN = os.environ.get("SENTINEL_INGEST_TOKEN", "")
+MAX_INGEST_LINES = 500
+SIMULATION_TICK_SECONDS = int(os.environ.get("SENTINEL_SIMULATION_TICK_SECONDS", 300))
+
+
+async def _simulation_loop():
+    """
+    Mantiene la demo "viva": cada SIMULATION_TICK_SECONDS genera un lote
+    nuevo de actividad simulada y actualiza el heartbeat de los agentes
+    simulados. Sin esto, el bootstrap corre una sola vez y los agentes
+    se ven DISCONNECTED / el dashboard se ve igual en cada refresh.
+    """
+    while True:
+        await asyncio.sleep(SIMULATION_TICK_SECONDS)
+        try:
+            await asyncio.to_thread(simulate_tick)
+        except Exception:
+            logger.exception("Tick de simulación falló — se reintenta en el siguiente ciclo")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("SENTINEL API iniciando — corriendo bootstrap si la DB está vacía")
     bootstrap_data()
+
+    task = asyncio.create_task(_simulation_loop())
     yield
+    task.cancel()
 
 
 app = FastAPI(
@@ -145,6 +175,40 @@ def remove_dashboard(dashboard_id: int) -> dict:
     if not delete_dashboard(dashboard_id):
         raise HTTPException(status_code=404, detail="Dashboard no encontrado")
     return {"deleted": dashboard_id}
+
+
+@router.post("/ingest", response_model=IngestResponse)
+def ingest(body: IngestRequest, x_sentinel_token: str = Header(default="")) -> dict:
+    """
+    Recibe líneas de log de un agente real (ver agent/ship_logs.py) y las
+    procesa igual que la simulación: parsea, detecta, inserta. Protegido
+    con un secreto compartido — nunca se expone en Nginx a propósito,
+    pero de todos modos queda alcanzable vía /api/ingest (así funciona el
+    proxy hoy), así que el token es la única defensa real, no la ruta.
+    """
+    if not INGEST_TOKEN or not hmac.compare_digest(x_sentinel_token, INGEST_TOKEN):
+        raise HTTPException(status_code=401, detail="Token inválido o no configurado")
+
+    if body.log_source not in LINE_PARSERS:
+        raise HTTPException(status_code=400, detail=f"log_source inválido: {body.log_source}")
+
+    if len(body.lines) > MAX_INGEST_LINES:
+        raise HTTPException(status_code=400, detail=f"Máximo {MAX_INGEST_LINES} líneas por request")
+
+    agent = find_known_agent(body.agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent_id desconocido: {body.agent_id}")
+
+    events, unparsed = ingest_lines(agent, body.log_source, body.lines)
+    touch_agent(agent.agent_id)
+
+    engine = DetectionEngine(start_counter=get_max_alert_counter())
+    alerts = engine.run_all_rules(events)
+
+    insert_events(events)
+    insert_alerts(alerts)
+
+    return {"ingested": len(events), "unparsed": unparsed, "alerts": len(alerts)}
 
 
 app.include_router(router)

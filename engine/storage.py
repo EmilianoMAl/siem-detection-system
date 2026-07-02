@@ -211,6 +211,24 @@ def insert_alerts(alerts: list[Alert]) -> int:
     return inserted
 
 
+def get_max_alert_counter() -> int:
+    """
+    Máximo sufijo numérico entre los alert_id existentes (ej. "ALERT-0042"
+    -> 42), sin importar el orden de inserción. El motor de detección
+    arranca su contador desde aquí en cada corrida (bootstrap, tick
+    periódico, ingesta real) para que los IDs nuevos nunca choquen con
+    uno ya insertado — si chocaran, el INSERT OR IGNORE de insert_alerts
+    descartaría la alerta nueva en silencio.
+    """
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT MAX(CAST(substr(alert_id, 7) AS INTEGER)) as max_counter FROM alerts"
+    ).fetchone()
+    conn.close()
+
+    return row["max_counter"] or 0
+
+
 def register_agents(agents: list[Agent]) -> None:
     """
     Registra la flota de agentes conocida. INSERT OR IGNORE — si el

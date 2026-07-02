@@ -24,6 +24,24 @@ def test_ssh_brute_force_triggers_above_threshold():
     assert alerts[0].severity == "HIGH"
 
 
+def test_alert_ids_continue_from_start_counter():
+    events = [make_event() for _ in range(6)]
+    engine = DetectionEngine(start_counter=41)
+
+    alerts = engine.detect_brute_force(events)
+
+    assert alerts[0].alert_id == "ALERT-0042"
+
+
+def test_default_start_counter_is_zero():
+    events = [make_event() for _ in range(6)]
+    engine = DetectionEngine()
+
+    alerts = engine.detect_brute_force(events)
+
+    assert alerts[0].alert_id == "ALERT-0001"
+
+
 def test_ssh_brute_force_below_threshold_does_not_trigger():
     events = [make_event() for _ in range(2)]
     engine = DetectionEngine()

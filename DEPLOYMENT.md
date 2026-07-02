@@ -96,6 +96,16 @@ docker compose version
 sudo apt install -y git
 git clone https://github.com/EmilianoMAl/siem-detection-system.git
 cd siem-detection-system
+cp .env.example .env
+```
+
+Edita `.env` y como mínimo genera un token para `SENTINEL_INGEST_TOKEN`
+(lo vas a necesitar en el paso 11, pero no cuesta nada dejarlo listo ya):
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+```bash
 docker compose up -d --build
 ```
 
@@ -161,6 +171,84 @@ sudo ufw status verbose
 
 Verifica desde tu PC que 8000/8501 ya no respondan directo (deben dar
 timeout) y que el 80 siga funcionando normal.
+
+## 11. Agente real: monitorear el tráfico genuino de esta VM
+
+Hasta aquí SENTINEL solo corre datos simulados. Esta VM, al tener IP
+pública, ya recibe tráfico real (bots escaneando el puerto 22, tráfico
+oportunista al puerto 80) — `agent/ship_logs.py` manda ese tráfico real
+a la API, sin dependencias externas (solo la librería estándar de Python).
+
+**11.1 — Completa el `.env`** con el hostname/IP real de la VM y el mismo
+token que generaste en el paso 7:
+```bash
+# En .env:
+SENTINEL_REAL_AGENT_HOSTNAME=sentinel-vm
+SENTINEL_REAL_AGENT_IP=<tu-ip-publica>
+SENTINEL_INGEST_TOKEN=<el-token-que-generaste>
+```
+Aplica el cambio: `docker compose up -d` (recrea el contenedor `api` con
+las nuevas variables — vas a ver en sus logs "Agente real registrado").
+
+**11.2 — Dale permiso al usuario que corre el agente para leer los logs
+del sistema** (auth.log solo lo puede leer root o el grupo `adm`):
+```bash
+sudo usermod -aG adm ubuntu
+```
+
+**11.3 — Crea el archivo de entorno para el servicio**:
+```bash
+sudo mkdir -p /etc/sentinel-agent
+sudo tee /etc/sentinel-agent/env > /dev/null <<'EOF'
+SENTINEL_API_URL=http://127.0.0.1:8000
+SENTINEL_INGEST_TOKEN=<el-mismo-token-del-.env>
+SENTINEL_AGENT_STATE=/var/lib/sentinel-agent/offsets.json
+EOF
+sudo chmod 600 /etc/sentinel-agent/env
+```
+
+**11.4 — Crea el servicio y el timer de systemd** (corre el script cada 30s):
+```bash
+sudo tee /etc/systemd/system/sentinel-agent.service > /dev/null <<EOF
+[Unit]
+Description=SENTINEL — envía logs reales de esta VM a la API
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/sentinel-agent/env
+ExecStart=/usr/bin/python3 $HOME/siem-detection-system/agent/ship_logs.py
+EOF
+
+sudo tee /etc/systemd/system/sentinel-agent.timer > /dev/null <<'EOF'
+[Unit]
+Description=Corre sentinel-agent.service cada 30 segundos
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=30
+
+[Install]
+WantedBy=timers.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now sentinel-agent.timer
+```
+
+**11.5 — Verifica que esté corriendo**:
+```bash
+sudo systemctl status sentinel-agent.timer
+sudo journalctl -u sentinel-agent.service -f    # Ctrl+C para salir
+```
+
+Deberías ver líneas tipo `[ssh] N líneas enviadas -> {...}` cada 30
+segundos. En el dashboard, el agente `agent-real-vm` va a pasar de
+"NEVER_CONNECTED" a "ACTIVE" en cuanto llegue el primer envío.
+
+> Nota de seguridad: el servicio corre como root porque `/var/log/auth.log`
+> solo lo lee root o el grupo `adm` — para una VM personal de demo es un
+> trade-off razonable, pero en un entorno más sensible conviene un usuario
+> dedicado con permisos mínimos.
 
 ---
 

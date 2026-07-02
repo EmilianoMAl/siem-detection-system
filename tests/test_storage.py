@@ -150,3 +150,22 @@ def test_dashboard_crud_roundtrip():
 def test_update_and_delete_missing_dashboard_return_false():
     assert storage.update_dashboard(999, "x", []) is False
     assert storage.delete_dashboard(999) is False
+
+
+def make_alert(alert_id: str) -> Alert:
+    return Alert(
+        alert_id=alert_id, rule_name="SSH_BRUTE_FORCE", severity="HIGH",
+        description="test", source_ip="1.2.3.4", username="root",
+        hostname="prod-server-01", evidence=["line1"],
+        recommendation="block ip", mitre_technique="T1110",
+    )
+
+
+def test_get_max_alert_counter_empty_db_returns_zero():
+    assert storage.get_max_alert_counter() == 0
+
+
+def test_get_max_alert_counter_reads_highest_suffix():
+    storage.insert_alerts([make_alert("ALERT-0001"), make_alert("ALERT-0042")])
+
+    assert storage.get_max_alert_counter() == 42

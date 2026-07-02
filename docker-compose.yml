@@ -7,6 +7,12 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data
+    environment:
+      - SENTINEL_INGEST_TOKEN=${SENTINEL_INGEST_TOKEN:-}
+      - SENTINEL_REAL_AGENT_HOSTNAME=${SENTINEL_REAL_AGENT_HOSTNAME:-}
+      - SENTINEL_REAL_AGENT_IP=${SENTINEL_REAL_AGENT_IP:-}
+      - SENTINEL_REAL_AGENT_OS=${SENTINEL_REAL_AGENT_OS:-}
+      - SENTINEL_SIMULATION_TICK_SECONDS=${SENTINEL_SIMULATION_TICK_SECONDS:-300}
     restart: unless-stopped
 
   dashboard:

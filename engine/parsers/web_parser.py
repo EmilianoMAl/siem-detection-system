@@ -6,14 +6,17 @@ from engine.parsers.auth_parser import LogEvent
 
 logger = logging.getLogger(__name__)
 
-# Formato estilo nginx/apache "combined log" (sin el campo referrer):
+# Formato "combined log" estándar de nginx/apache — el mismo que produce
+# engine/generators/web_generator.py Y el access log real de nginx:
 # 10.0.0.12 - - [03/Apr/2026:10:23:45 +0000] "GET /login?user=admin HTTP/1.1" 200 512 "-" "Mozilla/5.0"
+# El campo referrer (penúltimo) es "-" en nuestros datos sintéticos, pero
+# en tráfico real puede traer una URL de verdad — no se asume literal.
 PATTERN = re.compile(
     r"(?P<source_ip>[\d.]+)\s-\s-\s"
     r"\[(?P<timestamp>[^\]]+)\]\s"
     r'"(?P<method>[A-Z]+)\s(?P<path>\S+)\sHTTP/\d\.\d"\s'
     r"(?P<status_code>\d{3})\s(?P<size>\d+)\s"
-    r'"-"\s"(?P<user_agent>[^"]*)"'
+    r'"(?P<referrer>[^"]*)"\s"(?P<user_agent>[^"]*)"'
 )
 
 
@@ -49,6 +52,7 @@ def parse_line(line: str) -> LogEvent | None:
             "method": groups.get("method"),
             "path": groups.get("path"),
             "status_code": status_code,
+            "referrer": groups.get("referrer"),
             "user_agent": groups.get("user_agent"),
         },
     )

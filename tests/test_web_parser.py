@@ -29,3 +29,15 @@ def test_parse_sqli_payload_in_path():
 
 def test_parse_malformed_line_returns_none():
     assert parse_line("not a valid access log line") is None
+
+
+def test_parse_accepts_real_referrer_not_just_dash():
+    # Trafico real (no sintetico) puede traer un referrer de verdad en vez
+    # del placeholder "-" que generan nuestros logs de demo.
+    line = ('203.0.113.5 - - [03/Apr/2026:10:23:45 +0000] '
+            '"GET /dashboard HTTP/1.1" 200 900 "https://google.com/search" "Mozilla/5.0"')
+    event = parse_line(line)
+
+    assert event is not None
+    assert event.metadata["referrer"] == "https://google.com/search"
+    assert event.metadata["user_agent"] == "Mozilla/5.0"

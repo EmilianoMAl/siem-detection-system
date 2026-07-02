@@ -85,3 +85,15 @@ class DashboardDetail(BaseModel):
 class DashboardSaveRequest(BaseModel):
     name: str
     layout: list[dict]
+
+
+class IngestRequest(BaseModel):
+    agent_id: str
+    log_source: str
+    lines: list[str]
+
+
+class IngestResponse(BaseModel):
+    ingested: int
+    unparsed: int
+    alerts: int
