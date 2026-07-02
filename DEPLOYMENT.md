@@ -172,6 +172,21 @@ sudo ufw status verbose
 Verifica desde tu PC que 8000/8501 ya no respondan directo (deben dar
 timeout) y que el 80 siga funcionando normal.
 
+**Gotcha real de ufw + Docker**: por default, `ufw` deniega la cadena
+`FORWARD` (`DEFAULT_FORWARD_POLICY="DROP"` en `/etc/default/ufw`) — eso
+bloquea las conexiones **salientes** de los contenedores hacia internet
+(DNS resuelve bien, pero cualquier `urlopen`/`requests` desde dentro de
+un contenedor se cuelga hasta hacer timeout). Si algo dentro de la API
+necesita salir a internet (como el mapa geográfico, que consulta
+ip-api.com), corrige esto:
+```bash
+sudo sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
+sudo ufw reload
+```
+Esto no reabre nada de lo que ya cerraste — sigue siendo `ufw` el que
+decide qué entra por `INPUT` (22/80/443 nada más); solo deja de bloquear
+el tráfico que Docker reenvía hacia afuera.
+
 ## 11. Agente real: monitorear el tráfico genuino de esta VM
 
 Hasta aquí SENTINEL solo corre datos simulados. Esta VM, al tener IP
