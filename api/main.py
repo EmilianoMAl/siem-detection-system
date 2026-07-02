@@ -21,13 +21,14 @@ from engine.storage import (
     save_dashboard, update_dashboard, list_dashboards,
     get_dashboard, delete_dashboard,
     insert_events, insert_alerts, touch_agent, get_max_alert_counter,
-    update_alert_status,
+    update_alert_status, get_attacker_geo,
 )
 from api.schemas import (
     SummaryResponse, AlertResponse, AgentResponse,
     TopIpResponse, EventTypeResponse, TimelinePointResponse, HealthResponse,
     QueryPointResponse, DashboardSummary, DashboardDetail, DashboardSaveRequest,
     IngestRequest, IngestResponse, AlertStatusUpdate, MitreTechniqueResponse,
+    GeoAttackerResponse,
 )
 
 logging.basicConfig(
@@ -155,6 +156,11 @@ def get_mitre_coverage() -> list[dict]:
         }
         for tactic, technique_id, technique_name in MITRE_REFERENCE
     ]
+
+
+@router.get("/geo-attackers", response_model=list[GeoAttackerResponse])
+def get_geo_attackers() -> list[dict]:
+    return get_attacker_geo()
 
 
 @router.get("/query", response_model=list[QueryPointResponse])

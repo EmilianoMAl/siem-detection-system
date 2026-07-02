@@ -263,3 +263,49 @@ def test_query_mitre_coverage_ignores_missing_technique():
     storage.insert_alerts([alert])
 
     assert storage.query_mitre_coverage() == []
+
+
+def test_geo_cache_roundtrip():
+    assert storage.get_cached_geo(["45.33.32.156"]) == {}
+
+    storage.save_geo("45.33.32.156", "Germany", "DE", "Berlin", 52.52, 13.4)
+    cached = storage.get_cached_geo(["45.33.32.156", "1.2.3.4"])
+
+    assert cached["45.33.32.156"]["country"] == "Germany"
+    assert cached["45.33.32.156"]["lat"] == 52.52
+    assert "1.2.3.4" not in cached
+
+
+def test_get_attacker_geo_skips_private_ips_and_uses_cache(monkeypatch):
+    storage.insert_events([
+        make_event(source_ip="10.0.0.5"),               # privada -- se descarta
+        make_event(source_ip="45.33.32.156"),
+        make_event(source_ip="45.33.32.156"),
+        make_event(source_ip="185.220.101.45"),
+    ])
+    storage.save_geo("45.33.32.156", "Germany", "DE", "Berlin", 52.52, 13.4)
+
+    lookups = []
+    def fake_lookup_ip(ip):
+        lookups.append(ip)
+        return {"country": "US", "country_code": "US", "city": "Ashburn", "lat": 39.0, "lon": -77.5}
+
+    monkeypatch.setattr(storage, "lookup_ip", fake_lookup_ip)
+
+    results = storage.get_attacker_geo()
+
+    # 45.33.32.156 ya estaba en cache -> no debió volver a consultarse.
+    assert lookups == ["185.220.101.45"]
+
+    by_ip = {r["source_ip"]: r for r in results}
+    assert by_ip["45.33.32.156"]["attempts"] == 2
+    assert by_ip["45.33.32.156"]["country"] == "Germany"
+    assert by_ip["185.220.101.45"]["country"] == "US"
+    assert "10.0.0.5" not in by_ip
+
+
+def test_get_attacker_geo_omits_ip_when_lookup_fails(monkeypatch):
+    storage.insert_events([make_event(source_ip="162.142.125.0")])
+    monkeypatch.setattr(storage, "lookup_ip", lambda ip: None)
+
+    assert storage.get_attacker_geo() == []

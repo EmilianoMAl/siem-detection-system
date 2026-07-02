@@ -6,6 +6,7 @@ from typing import Optional
 from engine.parsers.auth_parser import LogEvent
 from engine.detectors.rules import Alert
 from engine.agents import Agent
+from engine.geoip import is_private_ip, lookup_ip
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,16 @@ def initialize_db() -> None:
             layout        TEXT NOT NULL,   -- JSON: posiciones + config de cada widget
             created_at    TEXT DEFAULT (datetime('now')),
             updated_at    TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS ip_geo_cache (
+            source_ip     TEXT PRIMARY KEY,
+            country       TEXT,
+            country_code  TEXT,
+            city          TEXT,
+            lat           REAL,
+            lon           REAL,
+            looked_up_at  TEXT DEFAULT (datetime('now'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_events_source_ip
@@ -396,6 +407,81 @@ def query_mitre_coverage() -> list[dict]:
         counts[technique_id] = counts.get(technique_id, 0) + row["n"]
 
     return [{"technique_id": tid, "count": n} for tid, n in counts.items()]
+
+
+def get_cached_geo(ips: list[str]) -> dict[str, dict]:
+    """Geolocalización ya conocida para las IPs dadas (subset de las pedidas)."""
+    if not ips:
+        return {}
+
+    conn = get_connection()
+    placeholders = ",".join("?" * len(ips))
+    rows = conn.execute(
+        f"SELECT * FROM ip_geo_cache WHERE source_ip IN ({placeholders})", ips
+    ).fetchall()
+    conn.close()
+
+    return {row["source_ip"]: dict(row) for row in rows}
+
+
+def save_geo(source_ip: str, country: str, country_code: str, city: str, lat: float, lon: float) -> None:
+    """Guarda (o reemplaza) la geolocalización de una IP. Sin TTL — se cachea para siempre."""
+    conn = get_connection()
+    conn.execute(
+        """INSERT OR REPLACE INTO ip_geo_cache
+           (source_ip, country, country_code, city, lat, lon, looked_up_at)
+           VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+        (source_ip, country, country_code, city, lat, lon),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_attacker_geo(limit: int = 100, max_new_lookups: int = 20) -> list[dict]:
+    """
+    IPs públicas con actividad, geolocalizadas. Usa el cache primero;
+    para las que falten, consulta ip-api.com (tope de `max_new_lookups`
+    por llamada para no colgar el endpoint si un día aparecen muchas IPs
+    nuevas de golpe — las que no alcancen se resuelven en la próxima
+    llamada). Las IPs privadas (rangos que usan nuestros propios agentes
+    simulados) se descartan sin gastar una consulta externa.
+    """
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT source_ip, COUNT(*) as attempts
+        FROM events
+        WHERE source_ip IS NOT NULL
+        GROUP BY source_ip
+        ORDER BY attempts DESC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    conn.close()
+
+    attempts_by_ip = {row["source_ip"]: row["attempts"] for row in rows}
+    public_ips = [ip for ip in attempts_by_ip if not is_private_ip(ip)]
+
+    cached = get_cached_geo(public_ips)
+    missing = [ip for ip in public_ips if ip not in cached][:max_new_lookups]
+
+    for ip in missing:
+        geo = lookup_ip(ip)
+        if geo:
+            save_geo(ip, geo["country"], geo["country_code"], geo["city"], geo["lat"], geo["lon"])
+            cached[ip] = {**geo, "source_ip": ip}
+
+    results = []
+    for ip in public_ips:
+        geo = cached.get(ip)
+        if geo and geo.get("lat") is not None:
+            results.append({
+                "source_ip": ip,
+                "country": geo.get("country"),
+                "city": geo.get("city"),
+                "lat": geo["lat"],
+                "lon": geo["lon"],
+                "attempts": attempts_by_ip[ip],
+            })
+    return results
 
 
 def query_events_summary() -> dict:

@@ -77,6 +77,15 @@ class MitreTechniqueResponse(BaseModel):
     count: int
 
 
+class GeoAttackerResponse(BaseModel):
+    source_ip: str
+    country: Optional[str] = None
+    city: Optional[str] = None
+    lat: float
+    lon: float
+    attempts: int
+
+
 class QueryPointResponse(BaseModel):
     label: Optional[str] = None
     value: int

@@ -37,7 +37,8 @@ with st.sidebar:
     st.markdown(
         "<div class='muted-text'>Home — arriba en el sidebar</div>"
         "<div class='muted-text'>Agents — esta página</div>"
-        "<div class='muted-text'>MITRE</div>",
+        "<div class='muted-text'>MITRE</div>"
+        "<div class='muted-text'>Geomap</div>",
         unsafe_allow_html=True
     )
     st.markdown("---")

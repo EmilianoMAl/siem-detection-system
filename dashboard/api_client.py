@@ -51,3 +51,7 @@ def get_timeline(log_source: str = "ALL") -> list[dict]:
 
 def get_mitre_coverage() -> list[dict]:
     return _get("/mitre-coverage")
+
+
+def get_geo_attackers() -> list[dict]:
+    return _get("/geo-attackers")
