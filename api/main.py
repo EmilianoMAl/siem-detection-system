@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 LogSource = Literal["ALL", "SSH", "WEB", "FIM"]
 Severity = Literal["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"]
 Dataset = Literal["events", "alerts"]
+TimeRange = Literal["1h", "24h", "7d", "30d", "365d", "all"]
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -98,16 +99,16 @@ def health() -> dict:
 
 
 @router.get("/summary", response_model=SummaryResponse)
-def get_summary(log_source: LogSource = "ALL") -> dict:
-    return query_summary(log_source)
+def get_summary(log_source: LogSource = "ALL", time_range: TimeRange = "all") -> dict:
+    return query_summary(log_source, time_range)
 
 
 AlertStatus = Literal["OPEN", "ACKNOWLEDGED", "CLOSED"]
 
 
 @router.get("/alerts", response_model=list[AlertResponse])
-def get_alerts(status: AlertStatus | None = None) -> list[dict]:
-    return query_alerts(status=status, limit=500)
+def get_alerts(status: AlertStatus | None = None, time_range: TimeRange = "all") -> list[dict]:
+    return query_alerts(status=status, time_range=time_range, limit=500)
 
 
 @router.patch("/alerts/{alert_id}", response_model=AlertResponse)
@@ -124,18 +125,18 @@ def get_agents() -> list[dict]:
 
 
 @router.get("/top-ips", response_model=list[TopIpResponse])
-def get_top_ips(log_source: LogSource = "ALL") -> list[dict]:
-    return query_top_ips(log_source)
+def get_top_ips(log_source: LogSource = "ALL", time_range: TimeRange = "all") -> list[dict]:
+    return query_top_ips(log_source, time_range=time_range)
 
 
 @router.get("/event-types", response_model=list[EventTypeResponse])
-def get_event_types(log_source: LogSource = "ALL") -> list[dict]:
-    return query_event_types(log_source)
+def get_event_types(log_source: LogSource = "ALL", time_range: TimeRange = "all") -> list[dict]:
+    return query_event_types(log_source, time_range)
 
 
 @router.get("/timeline", response_model=list[TimelinePointResponse])
-def get_timeline(log_source: LogSource = "ALL") -> list[dict]:
-    return query_timeline(log_source)
+def get_timeline(log_source: LogSource = "ALL", time_range: TimeRange = "all") -> list[dict]:
+    return query_timeline(log_source, time_range)
 
 
 @router.get("/query-dimensions")

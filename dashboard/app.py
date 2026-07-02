@@ -16,6 +16,15 @@ RULE_SOURCE = {
     "FIM_CRITICAL_FILE_CHANGE": "fim",
 }
 
+TIME_RANGE_LABELS = {
+    "Todo el tiempo": "all",
+    "Última hora": "1h",
+    "Últimas 24 horas": "24h",
+    "Últimos 7 días": "7d",
+    "Últimos 30 días": "30d",
+    "Último año": "365d",
+}
+
 st.set_page_config(
     page_title="SENTINEL — SIEM Dashboard",
     page_icon="🛡️",
@@ -37,13 +46,13 @@ except requests.exceptions.RequestException:
 
 # ── DATA LAYER — el dashboard es un cliente puro de la API, no toca SQLite ──
 @st.cache_data(ttl=30)
-def load_summary(source: str):
-    return api_client.get_summary(source)
+def load_summary(source: str, time_range: str):
+    return api_client.get_summary(source, time_range)
 
 
 @st.cache_data(ttl=30)
-def load_alerts():
-    alerts = api_client.get_alerts()
+def load_alerts(time_range: str):
+    alerts = api_client.get_alerts(time_range=time_range)
     for a in alerts:
         a["source"] = RULE_SOURCE.get(a["rule_name"], "ssh")
     return alerts
@@ -59,8 +68,8 @@ def act_on_alert(alert_id: str, status: str):
 
 
 @st.cache_data(ttl=30)
-def load_top_ips(source: str):
-    rows = api_client.get_top_ips(source)
+def load_top_ips(source: str, time_range: str):
+    rows = api_client.get_top_ips(source, time_range)
     return pd.DataFrame(
         [(r["source_ip"], r["attempts"], r["targeted_users"]) for r in rows],
         columns=["IP", "Intentos", "Usuarios objetivo"],
@@ -68,14 +77,14 @@ def load_top_ips(source: str):
 
 
 @st.cache_data(ttl=30)
-def load_event_types(source: str):
-    rows = api_client.get_event_types(source)
+def load_event_types(source: str, time_range: str):
+    rows = api_client.get_event_types(source, time_range)
     return pd.DataFrame([(r["event_type"], r["n"]) for r in rows], columns=["Tipo", "Count"])
 
 
 @st.cache_data(ttl=30)
-def load_timeline(source: str):
-    rows = api_client.get_timeline(source)
+def load_timeline(source: str, time_range: str):
+    rows = api_client.get_timeline(source, time_range)
     return pd.DataFrame(
         [(r["hour"], r["event_type"], r["n"]) for r in rows],
         columns=["Hora", "Tipo", "Count"],
@@ -95,12 +104,17 @@ with st.sidebar:
         "Log Source", ["ALL", "SSH", "WEB", "FIM"],
         label_visibility="collapsed"
     )
+    time_range_label = st.selectbox(
+        "Time range", list(TIME_RANGE_LABELS.keys()),
+        label_visibility="collapsed"
+    )
+    time_range = TIME_RANGE_LABELS[time_range_label]
     show_closed = st.checkbox("Show closed alerts", value=False)
 
     st.markdown("---")
     st.markdown('<div class="section-label">System status</div>', unsafe_allow_html=True)
 
-    summary_for_status = load_summary(source_filter)
+    summary_for_status = load_summary(source_filter, time_range)
     st.markdown(f"""
     <div style='background:var(--surface);border:1px solid var(--border);
                 border-radius:10px;padding:12px 14px;margin-bottom:10px'>
@@ -141,7 +155,7 @@ with st.sidebar:
 
 
 # ── HEADER ──
-summary = load_summary(source_filter)
+summary = load_summary(source_filter, time_range)
 
 st.markdown(f"""
 <div style='display:flex;align-items:center;justify-content:space-between;
@@ -179,7 +193,7 @@ col_alerts, col_ips = st.columns([3, 2])
 
 with col_alerts:
     st.markdown('<div class="section-label">Active threat feed</div>', unsafe_allow_html=True)
-    alerts = load_alerts()
+    alerts = load_alerts(time_range)
     filtered = alerts
     if not show_closed:
         filtered = [a for a in filtered if a.get("status", "OPEN") != "CLOSED"]
@@ -232,7 +246,7 @@ with col_alerts:
 
 with col_ips:
     st.markdown('<div class="section-label">Top attacking IPs</div>', unsafe_allow_html=True)
-    df_ips = load_top_ips(source_filter)
+    df_ips = load_top_ips(source_filter, time_range)
     if not df_ips.empty:
         fig_ips = go.Figure(go.Bar(
             x=df_ips["Intentos"],
@@ -260,7 +274,7 @@ col_donut, col_timeline = st.columns([2, 3])
 
 with col_donut:
     st.markdown('<div class="section-label">Event distribution</div>', unsafe_allow_html=True)
-    df_types = load_event_types(source_filter)
+    df_types = load_event_types(source_filter, time_range)
     if not df_types.empty:
         colors = [EVENT_COLORS.get(t, "#3A3B41") for t in df_types["Tipo"]]
         fig_donut = go.Figure(go.Pie(
@@ -288,7 +302,7 @@ with col_donut:
 
 with col_timeline:
     st.markdown('<div class="section-label">Event timeline</div>', unsafe_allow_html=True)
-    df_time = load_timeline(source_filter)
+    df_time = load_timeline(source_filter, time_range)
     if not df_time.empty:
         fig_time = go.Figure()
         for etype in df_time["Tipo"].unique():

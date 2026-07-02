@@ -327,9 +327,10 @@ def query_agents() -> list[dict]:
 def query_alerts(
     severity: Optional[str] = None,
     status: Optional[str] = None,
+    time_range: str = "all",
     limit: int = 100
 ) -> list[dict]:
-    """Consulta alertas con filtro opcional por severidad y/o estado."""
+    """Consulta alertas con filtro opcional por severidad, estado y antigüedad."""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -341,6 +342,11 @@ def query_alerts(
     if status:
         where_clauses.append("status = ?")
         params.append(status)
+
+    time_clause, time_params = _time_range_clause(time_range)
+    if time_clause:
+        where_clauses.append(time_clause.replace("AND ", "", 1))
+        params.extend(time_params)
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -558,10 +564,33 @@ def _log_source_clause(log_source: str) -> tuple[str, tuple]:
     return "AND log_source = ?", (log_source.lower(),)
 
 
-def query_summary(log_source: str = "ALL") -> dict:
-    """KPIs del dashboard (eventos, alertas, agentes), con filtro opcional por fuente."""
+# Presets de rango de tiempo -> modificador de datetime('now', ?) de
+# SQLite. Filtra por created_at (cuándo SENTINEL insertó la fila) y no
+# por el timestamp del log -- ese es aleatorio/inconsistente entre
+# fuentes sintéticas y reales, created_at es el reloj real del servidor.
+TIME_RANGES = {
+    "1h": "-1 hours",
+    "24h": "-24 hours",
+    "7d": "-7 days",
+    "30d": "-30 days",
+    "365d": "-365 days",
+    "all": None,
+}
+
+
+def _time_range_clause(time_range: str, column: str = "created_at") -> tuple[str, tuple]:
+    """Clausula SQL parametrizada para filtrar por antigüedad. "all" no filtra nada."""
+    modifier = TIME_RANGES.get(time_range)
+    if modifier is None:
+        return "", ()
+    return f"AND {column} >= datetime('now', ?)", (modifier,)
+
+
+def query_summary(log_source: str = "ALL", time_range: str = "all") -> dict:
+    """KPIs del dashboard (eventos, alertas, agentes), con filtro opcional por fuente y antigüedad."""
     conn = get_connection()
-    clause, params = _log_source_clause(log_source)
+    source_clause, source_params = _log_source_clause(log_source)
+    time_clause, time_params = _time_range_clause(time_range)
 
     row = conn.execute(f"""
         SELECT
@@ -571,16 +600,18 @@ def query_summary(log_source: str = "ALL") -> dict:
                           event_type='invalid_user' THEN 1 ELSE 0 END) as failed_logins,
             SUM(CASE WHEN event_type='accepted_password' THEN 1 ELSE 0 END) as ok_logins,
             SUM(CASE WHEN event_type='sudo_command'      THEN 1 ELSE 0 END) as sudo_events
-        FROM events WHERE 1=1 {clause}
-    """, params).fetchone()
+        FROM events WHERE 1=1 {source_clause} {time_clause}
+    """, source_params + time_params).fetchone()
 
-    alert_row = conn.execute("""
+    alert_row = conn.execute(f"""
         SELECT COUNT(*) as total,
             SUM(CASE WHEN severity='CRITICAL' THEN 1 ELSE 0 END) as crit,
             SUM(CASE WHEN severity='HIGH'     THEN 1 ELSE 0 END) as high
-        FROM alerts
-    """).fetchone()
+        FROM alerts WHERE 1=1 {time_clause}
+    """, time_params).fetchone()
 
+    # Estado actual de los agentes -- no tiene sentido "filtrarlo por
+    # antigüedad", un agente está activo o no en este momento.
     agent_row = conn.execute(f"""
         SELECT COUNT(*) as total,
             SUM(CASE WHEN (strftime('%s','now') - strftime('%s', last_seen)) < {AGENT_OFFLINE_AFTER_SECONDS}
@@ -603,10 +634,11 @@ def query_summary(log_source: str = "ALL") -> dict:
     }
 
 
-def query_top_ips(log_source: str = "ALL", limit: int = 8) -> list[dict]:
-    """Top IPs por intentos fallidos (ssh) o requests (web), con filtro opcional por fuente."""
+def query_top_ips(log_source: str = "ALL", limit: int = 8, time_range: str = "all") -> list[dict]:
+    """Top IPs por intentos fallidos (ssh) o requests (web), con filtro opcional por fuente y antigüedad."""
     conn = get_connection()
-    clause, params = _log_source_clause(log_source)
+    source_clause, source_params = _log_source_clause(log_source)
+    time_clause, time_params = _time_range_clause(time_range)
     event_types = "('http_request')" if log_source == "WEB" else "('failed_password','invalid_user')"
 
     rows = conn.execute(f"""
@@ -614,41 +646,43 @@ def query_top_ips(log_source: str = "ALL", limit: int = 8) -> list[dict]:
                COUNT(DISTINCT username) as targeted_users
         FROM events
         WHERE event_type IN {event_types}
-          AND source_ip IS NOT NULL {clause}
+          AND source_ip IS NOT NULL {source_clause} {time_clause}
         GROUP BY source_ip ORDER BY attempts DESC LIMIT ?
-    """, params + (limit,)).fetchall()
+    """, source_params + time_params + (limit,)).fetchall()
 
     conn.close()
     return [dict(row) for row in rows]
 
 
-def query_event_types(log_source: str = "ALL") -> list[dict]:
-    """Distribución de eventos por tipo, con filtro opcional por fuente."""
+def query_event_types(log_source: str = "ALL", time_range: str = "all") -> list[dict]:
+    """Distribución de eventos por tipo, con filtro opcional por fuente y antigüedad."""
     conn = get_connection()
-    clause, params = _log_source_clause(log_source)
+    source_clause, source_params = _log_source_clause(log_source)
+    time_clause, time_params = _time_range_clause(time_range)
 
     rows = conn.execute(f"""
         SELECT event_type, COUNT(*) as n FROM events
-        WHERE 1=1 {clause}
+        WHERE 1=1 {source_clause} {time_clause}
         GROUP BY event_type
-    """, params).fetchall()
+    """, source_params + time_params).fetchall()
 
     conn.close()
     return [dict(row) for row in rows]
 
 
-def query_timeline(log_source: str = "ALL") -> list[dict]:
-    """Serie de tiempo de eventos por tipo, con filtro opcional por fuente."""
+def query_timeline(log_source: str = "ALL", time_range: str = "all") -> list[dict]:
+    """Serie de tiempo de eventos por tipo, con filtro opcional por fuente y antigüedad."""
     conn = get_connection()
-    clause, params = _log_source_clause(log_source)
+    source_clause, source_params = _log_source_clause(log_source)
+    time_clause, time_params = _time_range_clause(time_range)
 
     rows = conn.execute(f"""
         SELECT substr(timestamp, 1, 8) as hour,
                event_type, COUNT(*) as n
-        FROM events WHERE 1=1 {clause}
+        FROM events WHERE 1=1 {source_clause} {time_clause}
         GROUP BY hour, event_type
         ORDER BY hour
-    """, params).fetchall()
+    """, source_params + time_params).fetchall()
 
     conn.close()
     return [dict(row) for row in rows]

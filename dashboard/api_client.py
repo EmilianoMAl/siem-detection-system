@@ -21,12 +21,15 @@ def get_health() -> dict:
     return _get("/health")
 
 
-def get_summary(log_source: str = "ALL") -> dict:
-    return _get("/summary", {"log_source": log_source})
+def get_summary(log_source: str = "ALL", time_range: str = "all") -> dict:
+    return _get("/summary", {"log_source": log_source, "time_range": time_range})
 
 
-def get_alerts(status: str | None = None) -> list[dict]:
-    return _get("/alerts", {"status": status} if status else None)
+def get_alerts(status: str | None = None, time_range: str = "all") -> list[dict]:
+    params = {"time_range": time_range}
+    if status:
+        params["status"] = status
+    return _get("/alerts", params)
 
 
 def update_alert_status(alert_id: str, status: str, note: str | None = None) -> dict:
@@ -37,16 +40,16 @@ def get_agents() -> list[dict]:
     return _get("/agents")
 
 
-def get_top_ips(log_source: str = "ALL") -> list[dict]:
-    return _get("/top-ips", {"log_source": log_source})
+def get_top_ips(log_source: str = "ALL", time_range: str = "all") -> list[dict]:
+    return _get("/top-ips", {"log_source": log_source, "time_range": time_range})
 
 
-def get_event_types(log_source: str = "ALL") -> list[dict]:
-    return _get("/event-types", {"log_source": log_source})
+def get_event_types(log_source: str = "ALL", time_range: str = "all") -> list[dict]:
+    return _get("/event-types", {"log_source": log_source, "time_range": time_range})
 
 
-def get_timeline(log_source: str = "ALL") -> list[dict]:
-    return _get("/timeline", {"log_source": log_source})
+def get_timeline(log_source: str = "ALL", time_range: str = "all") -> list[dict]:
+    return _get("/timeline", {"log_source": log_source, "time_range": time_range})
 
 
 def get_mitre_coverage() -> list[dict]:

@@ -309,3 +309,96 @@ def test_get_attacker_geo_omits_ip_when_lookup_fails(monkeypatch):
     monkeypatch.setattr(storage, "lookup_ip", lambda ip: None)
 
     assert storage.get_attacker_geo() == []
+
+
+def _age_row(table: str, column: str, value: str, days_ago: float) -> None:
+    """Retrasa el created_at de una fila para simular que se insertó hace N días."""
+    conn = storage.get_connection()
+    conn.execute(
+        f"UPDATE {table} SET created_at = datetime('now', ?) WHERE {column} = ?",
+        (f"-{days_ago} days", value),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_time_range_clause_all_has_no_filter():
+    clause, params = storage._time_range_clause("all")
+
+    assert clause == ""
+    assert params == ()
+
+
+@pytest.mark.parametrize("time_range,modifier", [
+    ("1h", "-1 hours"),
+    ("24h", "-24 hours"),
+    ("7d", "-7 days"),
+    ("30d", "-30 days"),
+    ("365d", "-365 days"),
+])
+def test_time_range_clause_builds_datetime_modifier(time_range, modifier):
+    clause, params = storage._time_range_clause(time_range)
+
+    assert clause == "AND created_at >= datetime('now', ?)"
+    assert params == (modifier,)
+
+
+def test_query_summary_excludes_old_events_by_time_range():
+    storage.insert_events([
+        make_event(source_ip="1.1.1.1"),
+        make_event(source_ip="2.2.2.2"),
+    ])
+    _age_row("events", "source_ip", "2.2.2.2", days_ago=2)
+
+    assert storage.query_summary(time_range="24h")["total_events"] == 1
+    assert storage.query_summary(time_range="all")["total_events"] == 2
+
+
+def test_query_top_ips_excludes_old_events_by_time_range():
+    storage.insert_events([
+        make_event(source_ip="1.1.1.1", event_type="failed_password"),
+        make_event(source_ip="2.2.2.2", event_type="failed_password"),
+    ])
+    _age_row("events", "source_ip", "2.2.2.2", days_ago=2)
+
+    recent_ips = {row["source_ip"] for row in storage.query_top_ips(time_range="24h")}
+    all_ips = {row["source_ip"] for row in storage.query_top_ips(time_range="all")}
+
+    assert recent_ips == {"1.1.1.1"}
+    assert all_ips == {"1.1.1.1", "2.2.2.2"}
+
+
+def test_query_event_types_excludes_old_events_by_time_range():
+    storage.insert_events([
+        make_event(event_type="failed_password"),
+        make_event(event_type="sudo_command"),
+    ])
+    _age_row("events", "event_type", "sudo_command", days_ago=2)
+
+    recent_types = {row["event_type"] for row in storage.query_event_types(time_range="24h")}
+    all_types = {row["event_type"] for row in storage.query_event_types(time_range="all")}
+
+    assert recent_types == {"failed_password"}
+    assert all_types == {"failed_password", "sudo_command"}
+
+
+def test_query_timeline_excludes_old_events_by_time_range():
+    storage.insert_events([make_event(), make_event()])
+    conn = storage.get_connection()
+    conn.execute("UPDATE events SET created_at = datetime('now', '-2 days')")
+    conn.commit()
+    conn.close()
+
+    assert storage.query_timeline(time_range="24h") == []
+    assert len(storage.query_timeline(time_range="all")) > 0
+
+
+def test_query_alerts_excludes_old_alerts_by_time_range():
+    storage.insert_alerts([make_alert("ALERT-0001"), make_alert("ALERT-0002")])
+    _age_row("alerts", "alert_id", "ALERT-0002", days_ago=2)
+
+    recent_ids = {row["alert_id"] for row in storage.query_alerts(time_range="24h")}
+    all_ids = {row["alert_id"] for row in storage.query_alerts(time_range="all")}
+
+    assert recent_ids == {"ALERT-0001"}
+    assert all_ids == {"ALERT-0001", "ALERT-0002"}
