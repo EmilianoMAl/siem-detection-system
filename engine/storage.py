@@ -328,6 +328,8 @@ def query_alerts(
     severity: Optional[str] = None,
     status: Optional[str] = None,
     time_range: str = "all",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
     limit: int = 100
 ) -> list[dict]:
     """Consulta alertas con filtro opcional por severidad, estado y antigüedad."""
@@ -343,7 +345,7 @@ def query_alerts(
         where_clauses.append("status = ?")
         params.append(status)
 
-    time_clause, time_params = _time_range_clause(time_range)
+    time_clause, time_params = _time_range_clause(time_range, start, end)
     if time_clause:
         where_clauses.append(time_clause.replace("AND ", "", 1))
         params.extend(time_params)
@@ -578,19 +580,45 @@ TIME_RANGES = {
 }
 
 
-def _time_range_clause(time_range: str, column: str = "created_at") -> tuple[str, tuple]:
-    """Clausula SQL parametrizada para filtrar por antigüedad. "all" no filtra nada."""
+def _time_range_clause(
+    time_range: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    column: str = "created_at",
+) -> tuple[str, tuple]:
+    """
+    Clausula SQL parametrizada para filtrar por antigüedad. "all" no
+    filtra nada. "custom" ignora los presets de TIME_RANGES y filtra
+    por un rango exacto (start/end como "YYYY-MM-DD HH:MM:SS", el
+    mismo formato que produce datetime('now') en SQLite).
+    """
+    if time_range == "custom":
+        clauses: list[str] = []
+        params: list[str] = []
+        if start:
+            clauses.append(f"{column} >= ?")
+            params.append(start)
+        if end:
+            clauses.append(f"{column} <= ?")
+            params.append(end)
+        if not clauses:
+            return "", ()
+        return "AND " + " AND ".join(clauses), tuple(params)
+
     modifier = TIME_RANGES.get(time_range)
     if modifier is None:
         return "", ()
     return f"AND {column} >= datetime('now', ?)", (modifier,)
 
 
-def query_summary(log_source: str = "ALL", time_range: str = "all") -> dict:
+def query_summary(
+    log_source: str = "ALL", time_range: str = "all",
+    start: Optional[str] = None, end: Optional[str] = None,
+) -> dict:
     """KPIs del dashboard (eventos, alertas, agentes), con filtro opcional por fuente y antigüedad."""
     conn = get_connection()
     source_clause, source_params = _log_source_clause(log_source)
-    time_clause, time_params = _time_range_clause(time_range)
+    time_clause, time_params = _time_range_clause(time_range, start, end)
 
     row = conn.execute(f"""
         SELECT
@@ -634,11 +662,14 @@ def query_summary(log_source: str = "ALL", time_range: str = "all") -> dict:
     }
 
 
-def query_top_ips(log_source: str = "ALL", limit: int = 8, time_range: str = "all") -> list[dict]:
+def query_top_ips(
+    log_source: str = "ALL", limit: int = 8, time_range: str = "all",
+    start: Optional[str] = None, end: Optional[str] = None,
+) -> list[dict]:
     """Top IPs por intentos fallidos (ssh) o requests (web), con filtro opcional por fuente y antigüedad."""
     conn = get_connection()
     source_clause, source_params = _log_source_clause(log_source)
-    time_clause, time_params = _time_range_clause(time_range)
+    time_clause, time_params = _time_range_clause(time_range, start, end)
     event_types = "('http_request')" if log_source == "WEB" else "('failed_password','invalid_user')"
 
     rows = conn.execute(f"""
@@ -654,11 +685,14 @@ def query_top_ips(log_source: str = "ALL", limit: int = 8, time_range: str = "al
     return [dict(row) for row in rows]
 
 
-def query_event_types(log_source: str = "ALL", time_range: str = "all") -> list[dict]:
+def query_event_types(
+    log_source: str = "ALL", time_range: str = "all",
+    start: Optional[str] = None, end: Optional[str] = None,
+) -> list[dict]:
     """Distribución de eventos por tipo, con filtro opcional por fuente y antigüedad."""
     conn = get_connection()
     source_clause, source_params = _log_source_clause(log_source)
-    time_clause, time_params = _time_range_clause(time_range)
+    time_clause, time_params = _time_range_clause(time_range, start, end)
 
     rows = conn.execute(f"""
         SELECT event_type, COUNT(*) as n FROM events
@@ -670,11 +704,14 @@ def query_event_types(log_source: str = "ALL", time_range: str = "all") -> list[
     return [dict(row) for row in rows]
 
 
-def query_timeline(log_source: str = "ALL", time_range: str = "all") -> list[dict]:
+def query_timeline(
+    log_source: str = "ALL", time_range: str = "all",
+    start: Optional[str] = None, end: Optional[str] = None,
+) -> list[dict]:
     """Serie de tiempo de eventos por tipo, con filtro opcional por fuente y antigüedad."""
     conn = get_connection()
     source_clause, source_params = _log_source_clause(log_source)
-    time_clause, time_params = _time_range_clause(time_range)
+    time_clause, time_params = _time_range_clause(time_range, start, end)
 
     rows = conn.execute(f"""
         SELECT substr(timestamp, 1, 8) as hour,

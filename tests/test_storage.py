@@ -402,3 +402,70 @@ def test_query_alerts_excludes_old_alerts_by_time_range():
 
     assert recent_ids == {"ALERT-0001"}
     assert all_ids == {"ALERT-0001", "ALERT-0002"}
+
+
+def _set_created_at(table: str, column: str, value: str, created_at: str) -> None:
+    conn = storage.get_connection()
+    conn.execute(f"UPDATE {table} SET created_at = ? WHERE {column} = ?", (created_at, value))
+    conn.commit()
+    conn.close()
+
+
+def test_time_range_clause_custom_with_no_bounds_has_no_filter():
+    clause, params = storage._time_range_clause("custom")
+
+    assert clause == ""
+    assert params == ()
+
+
+def test_time_range_clause_custom_with_only_start():
+    clause, params = storage._time_range_clause("custom", start="2026-06-01 00:00:00")
+
+    assert clause == "AND created_at >= ?"
+    assert params == ("2026-06-01 00:00:00",)
+
+
+def test_time_range_clause_custom_with_only_end():
+    clause, params = storage._time_range_clause("custom", end="2026-06-01 23:59:59")
+
+    assert clause == "AND created_at <= ?"
+    assert params == ("2026-06-01 23:59:59",)
+
+
+def test_time_range_clause_custom_with_both_bounds():
+    clause, params = storage._time_range_clause(
+        "custom", start="2026-06-01 00:00:00", end="2026-06-05 23:59:59"
+    )
+
+    assert clause == "AND created_at >= ? AND created_at <= ?"
+    assert params == ("2026-06-01 00:00:00", "2026-06-05 23:59:59")
+
+
+def test_query_summary_filters_custom_range_to_middle_day_only():
+    storage.insert_events([
+        make_event(source_ip="1.1.1.1"),
+        make_event(source_ip="2.2.2.2"),
+        make_event(source_ip="3.3.3.3"),
+    ])
+    _set_created_at("events", "source_ip", "1.1.1.1", "2026-06-01 10:00:00")
+    _set_created_at("events", "source_ip", "2.2.2.2", "2026-06-05 10:00:00")
+    _set_created_at("events", "source_ip", "3.3.3.3", "2026-06-10 10:00:00")
+
+    result = storage.query_summary(
+        time_range="custom", start="2026-06-04 00:00:00", end="2026-06-06 23:59:59"
+    )
+
+    assert result["total_events"] == 1
+    assert result["unique_ips"] == 1
+
+
+def test_query_alerts_custom_range_excludes_alerts_outside_window():
+    storage.insert_alerts([make_alert("ALERT-0001"), make_alert("ALERT-0002")])
+    _set_created_at("alerts", "alert_id", "ALERT-0001", "2026-06-01 10:00:00")
+    _set_created_at("alerts", "alert_id", "ALERT-0002", "2026-06-10 10:00:00")
+
+    result = storage.query_alerts(
+        time_range="custom", start="2026-06-01 00:00:00", end="2026-06-02 00:00:00"
+    )
+
+    assert {row["alert_id"] for row in result} == {"ALERT-0001"}

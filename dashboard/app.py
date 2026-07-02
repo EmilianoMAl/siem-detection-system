@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta, timezone, time as dtime
 
 import api_client
 from theme import inject_theme, sidebar_brand, PLOTLY, EVENT_COLORS, SEVERITY_CLASS
@@ -23,6 +23,7 @@ TIME_RANGE_LABELS = {
     "Últimos 7 días": "7d",
     "Últimos 30 días": "30d",
     "Último año": "365d",
+    "Personalizado": "custom",
 }
 
 st.set_page_config(
@@ -46,13 +47,13 @@ except requests.exceptions.RequestException:
 
 # ── DATA LAYER — el dashboard es un cliente puro de la API, no toca SQLite ──
 @st.cache_data(ttl=30)
-def load_summary(source: str, time_range: str):
-    return api_client.get_summary(source, time_range)
+def load_summary(source: str, time_range: str, start: str | None = None, end: str | None = None):
+    return api_client.get_summary(source, time_range, start, end)
 
 
 @st.cache_data(ttl=30)
-def load_alerts(time_range: str):
-    alerts = api_client.get_alerts(time_range=time_range)
+def load_alerts(time_range: str, start: str | None = None, end: str | None = None):
+    alerts = api_client.get_alerts(time_range=time_range, start=start, end=end)
     for a in alerts:
         a["source"] = RULE_SOURCE.get(a["rule_name"], "ssh")
     return alerts
@@ -68,8 +69,8 @@ def act_on_alert(alert_id: str, status: str):
 
 
 @st.cache_data(ttl=30)
-def load_top_ips(source: str, time_range: str):
-    rows = api_client.get_top_ips(source, time_range)
+def load_top_ips(source: str, time_range: str, start: str | None = None, end: str | None = None):
+    rows = api_client.get_top_ips(source, time_range, start, end)
     return pd.DataFrame(
         [(r["source_ip"], r["attempts"], r["targeted_users"]) for r in rows],
         columns=["IP", "Intentos", "Usuarios objetivo"],
@@ -77,14 +78,14 @@ def load_top_ips(source: str, time_range: str):
 
 
 @st.cache_data(ttl=30)
-def load_event_types(source: str, time_range: str):
-    rows = api_client.get_event_types(source, time_range)
+def load_event_types(source: str, time_range: str, start: str | None = None, end: str | None = None):
+    rows = api_client.get_event_types(source, time_range, start, end)
     return pd.DataFrame([(r["event_type"], r["n"]) for r in rows], columns=["Tipo", "Count"])
 
 
 @st.cache_data(ttl=30)
-def load_timeline(source: str, time_range: str):
-    rows = api_client.get_timeline(source, time_range)
+def load_timeline(source: str, time_range: str, start: str | None = None, end: str | None = None):
+    rows = api_client.get_timeline(source, time_range, start, end)
     return pd.DataFrame(
         [(r["hour"], r["event_type"], r["n"]) for r in rows],
         columns=["Hora", "Tipo", "Count"],
@@ -109,12 +110,37 @@ with st.sidebar:
         label_visibility="collapsed"
     )
     time_range = TIME_RANGE_LABELS[time_range_label]
+
+    start_str = end_str = None
+    if time_range == "custom":
+        today = datetime.now(timezone.utc).date()
+        date_range = st.date_input(
+            "Rango de fechas", value=(today - timedelta(days=7), today),
+        )
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            range_start, range_end = date_range
+        else:
+            # Streamlit devuelve una tupla de 1 elemento mientras el
+            # usuario no elige el segundo día del rango todavía.
+            only_day = date_range[0] if isinstance(date_range, tuple) else date_range
+            range_start = range_end = only_day
+
+        col_from, col_to = st.columns(2)
+        with col_from:
+            time_from = st.time_input("Desde", value=dtime(0, 0))
+        with col_to:
+            time_to = st.time_input("Hasta", value=dtime(23, 59))
+
+        start_str = datetime.combine(range_start, time_from).strftime("%Y-%m-%d %H:%M:%S")
+        end_str = datetime.combine(range_end, time_to).strftime("%Y-%m-%d %H:%M:%S")
+        st.caption("Horario en UTC — mismo huso que usa la base de datos.")
+
     show_closed = st.checkbox("Show closed alerts", value=False)
 
     st.markdown("---")
     st.markdown('<div class="section-label">System status</div>', unsafe_allow_html=True)
 
-    summary_for_status = load_summary(source_filter, time_range)
+    summary_for_status = load_summary(source_filter, time_range, start_str, end_str)
     st.markdown(f"""
     <div style='background:var(--surface);border:1px solid var(--border);
                 border-radius:10px;padding:12px 14px;margin-bottom:10px'>
@@ -155,7 +181,7 @@ with st.sidebar:
 
 
 # ── HEADER ──
-summary = load_summary(source_filter, time_range)
+summary = load_summary(source_filter, time_range, start_str, end_str)
 
 st.markdown(f"""
 <div style='display:flex;align-items:center;justify-content:space-between;
@@ -193,7 +219,7 @@ col_alerts, col_ips = st.columns([3, 2])
 
 with col_alerts:
     st.markdown('<div class="section-label">Active threat feed</div>', unsafe_allow_html=True)
-    alerts = load_alerts(time_range)
+    alerts = load_alerts(time_range, start_str, end_str)
     filtered = alerts
     if not show_closed:
         filtered = [a for a in filtered if a.get("status", "OPEN") != "CLOSED"]
@@ -246,7 +272,7 @@ with col_alerts:
 
 with col_ips:
     st.markdown('<div class="section-label">Top attacking IPs</div>', unsafe_allow_html=True)
-    df_ips = load_top_ips(source_filter, time_range)
+    df_ips = load_top_ips(source_filter, time_range, start_str, end_str)
     if not df_ips.empty:
         fig_ips = go.Figure(go.Bar(
             x=df_ips["Intentos"],
@@ -274,7 +300,7 @@ col_donut, col_timeline = st.columns([2, 3])
 
 with col_donut:
     st.markdown('<div class="section-label">Event distribution</div>', unsafe_allow_html=True)
-    df_types = load_event_types(source_filter, time_range)
+    df_types = load_event_types(source_filter, time_range, start_str, end_str)
     if not df_types.empty:
         colors = [EVENT_COLORS.get(t, "#3A3B41") for t in df_types["Tipo"]]
         fig_donut = go.Figure(go.Pie(
@@ -302,7 +328,7 @@ with col_donut:
 
 with col_timeline:
     st.markdown('<div class="section-label">Event timeline</div>', unsafe_allow_html=True)
-    df_time = load_timeline(source_filter, time_range)
+    df_time = load_timeline(source_filter, time_range, start_str, end_str)
     if not df_time.empty:
         fig_time = go.Figure()
         for etype in df_time["Tipo"].unique():
