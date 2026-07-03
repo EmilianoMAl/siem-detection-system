@@ -79,7 +79,7 @@ def ingest_lines(agent: Agent, log_source: str, lines: list[str]) -> tuple[list[
 
 
 def ingest_lines_multi(
-    agent: Agent, lines: list[str],
+    agent: Agent, items: list[tuple[str, dict]],
     parsers: list[Callable[[str], Optional[LogEvent]]],
 ) -> tuple[list[LogEvent], int]:
     """
@@ -88,17 +88,24 @@ def ingest_lines_multi(
     llegar auth.log real reenviado por rsyslog, un firewall SonicWall,
     o cualquier otra cosa). Prueba cada parser en orden por línea y usa
     el primero que matchee -- no hay un log_source fijo de antemano.
+
+    Cada item es (línea, metadata_extra) -- metadata_extra (ej. la IP
+    real de quién mandó el paquete UDP, distinta del `source_ip` que
+    extrae el parser del contenido del log) se fusiona en el evento
+    resultante si algún parser matcheó esa línea.
     """
     events = []
     unparsed = 0
 
-    for line in lines:
+    for line, extra_metadata in items:
         event = None
         for parser in parsers:
             event = parser(line)
             if event:
                 break
         if event:
+            if extra_metadata:
+                event.metadata = {**(event.metadata or {}), **extra_metadata}
             events.append(event)
         else:
             unparsed += 1

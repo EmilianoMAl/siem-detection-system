@@ -53,18 +53,26 @@ PARSER_CHAIN = [
 ]
 
 
-async def process_syslog_batch(lines: list[str]) -> None:
+async def process_syslog_batch(packets: list[tuple[str, str]]) -> None:
     """
-    Procesa un lote de líneas de syslog ya recibidas: parsea (probando
+    Procesa un lote de paquetes de syslog ya recibidos: parsea (probando
     varios formatos), corre el motor de detección, inserta. Separada de
     la recepción UDP para poder probarla directo con una lista de
-    strings, sin sockets ni temporizadores de por medio.
+    (línea, ip_emisor), sin sockets ni temporizadores de por medio.
+
+    ip_emisor es la IP real que mandó el paquete UDP -- se guarda en
+    event.metadata["sender_ip"], distinta del `source_ip` que algunos
+    parsers ya extraen del propio contenido del log (ej. la IP
+    atacante en una línea de SSH/SonicWall). Así se puede responder
+    "¿quién me mandó esto?" con un dato real en vez de confiar en el
+    hostname que el propio mensaje dice tener.
     """
-    if not lines:
+    if not packets:
         return
 
     agent = get_syslog_agent()
-    events, unparsed = ingest_lines_multi(agent, lines, PARSER_CHAIN)
+    items = [(line, {"sender_ip": sender_ip}) for line, sender_ip in packets]
+    events, unparsed = ingest_lines_multi(agent, items, PARSER_CHAIN)
     if not events:
         if unparsed:
             logger.debug(f"{unparsed} línea(s) de syslog no reconocidas")
@@ -81,23 +89,23 @@ async def process_syslog_batch(lines: list[str]) -> None:
 class SyslogProtocol(asyncio.DatagramProtocol):
     """Protocolo UDP mínimo: cada datagrama es un mensaje de syslog completo (RFC3164/5424)."""
 
-    def __init__(self, buffer: list[str]):
+    def __init__(self, buffer: list[tuple[str, str]]):
         self._buffer = buffer
 
     def datagram_received(self, data: bytes, addr) -> None:
         line = data.decode("utf-8", errors="replace").strip()
         if line:
-            self._buffer.append(line)
+            self._buffer.append((line, addr[0]))
 
 
-async def _flush_loop(buffer: list[str]) -> None:
+async def _flush_loop(buffer: list[tuple[str, str]]) -> None:
     while True:
         await asyncio.sleep(SYSLOG_FLUSH_SECONDS)
         if not buffer:
             continue
-        lines, buffer[:] = list(buffer), []
+        packets, buffer[:] = list(buffer), []
         try:
-            await process_syslog_batch(lines)
+            await process_syslog_batch(packets)
         except Exception:
             logger.exception("Error procesando lote de syslog — se reintenta en el siguiente ciclo")
 
@@ -108,7 +116,7 @@ async def start_syslog_listener(port: int) -> tuple:
     periódico. Retorna (transport, flush_task) para que el caller
     (lifespan de la API) los pueda cerrar/cancelar al apagar.
     """
-    buffer: list[str] = []
+    buffer: list[tuple[str, str]] = []
     loop = asyncio.get_running_loop()
     transport, _ = await loop.create_datagram_endpoint(
         lambda: SyslogProtocol(buffer), local_addr=("0.0.0.0", port)
