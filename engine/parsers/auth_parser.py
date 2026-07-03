@@ -71,7 +71,10 @@ PATTERNS = {
         TIMESTAMP + r"\s"
         r"(?P<hostname>\S+)\s"
         r"(?P<service>sshd)\[(?P<pid>\d+)\]:\s"
-        r"Failed password for (?P<username>\S+)\s"
+        # OpenSSH real logea "Failed password for X ..." si X existe, o
+        # "Failed password for invalid user X ..." si no -- ambas cuentan
+        # como el mismo evento (failed_password) para el motor de detección.
+        r"Failed password for (?:invalid user )?(?P<username>\S+)\s"
         r"from (?P<source_ip>[\d.]+)\s"
         r"port (?P<source_port>\d+)"
     ),

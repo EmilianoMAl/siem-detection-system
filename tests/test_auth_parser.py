@@ -33,6 +33,19 @@ def test_parse_invalid_user():
     assert event.username == "guest"
 
 
+def test_parse_failed_password_for_invalid_user():
+    # Variante real de OpenSSH cuando el usuario no existe -- distinta
+    # del "Invalid user X ..." (que es una línea separada).
+    line = "Apr 03 10:23:45 prod-server-01 sshd[4521]: Failed password for invalid user admin from 203.0.113.9 port 4444 ssh2"
+    event = parse_line(line)
+
+    assert event is not None
+    assert event.event_type == "failed_password"
+    assert event.username == "admin"
+    assert event.source_ip == "203.0.113.9"
+    assert event.source_port == 4444
+
+
 def test_parse_sudo_command():
     line = "Apr 03 10:23:45 prod-server-01 sudo[1234]: deploy : TTY=pts/0 ; PWD=/home/deploy ; USER=root ; COMMAND=/usr/bin/apt update"
     event = parse_line(line)

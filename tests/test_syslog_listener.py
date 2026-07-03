@@ -14,6 +14,15 @@ LINE_LOGIN_DENIED = (
     'proto=tcp/https note="Unknown user, authentication by SSO Agent" fw_action="NA"'
 )
 
+# Línea real como la que manda un rsyslog estándar (`*.* @@host:514`)
+# reenviando el auth.log de una VM Linux cliente -- con <PRI> incluido.
+LINE_SSH_FAILED_PASSWORD = (
+    "<38>Jul  3 18:30:01 client-vm sshd[2049]: "
+    "Failed password for invalid user admin from 203.0.113.9 port 4444 ssh2"
+)
+
+LINE_GENERIC_SYSLOG = "<86>Jul  3 18:31:00 client-vm CRON[9001]: (root) CMD (run-backup.sh)"
+
 
 @pytest.fixture(autouse=True)
 def isolated_db(tmp_path, monkeypatch):
@@ -65,3 +74,33 @@ def test_process_syslog_batch_empty_list_is_noop():
     asyncio.run(process_syslog_batch([]))
 
     assert storage.query_summary(environment="ALL")["total_events"] == 0
+
+
+def test_process_syslog_batch_recognizes_forwarded_ssh_line():
+    asyncio.run(process_syslog_batch([LINE_SSH_FAILED_PASSWORD]))
+
+    events = storage.query_event_types(environment="real_vm")
+    assert {e["event_type"] for e in events} == {"failed_password"}
+
+
+def test_process_syslog_batch_triggers_ssh_brute_force_on_forwarded_auth_log():
+    asyncio.run(process_syslog_batch([LINE_SSH_FAILED_PASSWORD] * 6))
+
+    alerts = storage.query_alerts(environment="real_vm")
+    assert any(a["rule_name"] == "SSH_BRUTE_FORCE" for a in alerts)
+
+
+def test_process_syslog_batch_falls_back_to_generic_syslog():
+    asyncio.run(process_syslog_batch([LINE_GENERIC_SYSLOG]))
+
+    events = storage.query_event_types(environment="real_vm")
+    assert {e["event_type"] for e in events} == {"syslog_message"}
+
+
+def test_process_syslog_batch_handles_mixed_formats_in_one_batch():
+    asyncio.run(process_syslog_batch([
+        LINE_SSH_FAILED_PASSWORD, LINE_LOGIN_DENIED, LINE_GENERIC_SYSLOG,
+    ]))
+
+    summary = storage.query_summary(environment="real_vm")
+    assert summary["total_events"] == 3

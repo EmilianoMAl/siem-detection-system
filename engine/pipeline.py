@@ -1,8 +1,9 @@
 import logging
 from pathlib import Path
+from typing import Callable, Optional
 
 from engine.agents import Agent
-from engine.parsers import auth_parser, web_parser, fim_parser, sonicwall_parser
+from engine.parsers import auth_parser, web_parser, fim_parser, sonicwall_parser, generic_syslog_parser
 from engine.parsers.auth_parser import LogEvent
 
 logger = logging.getLogger(__name__)
@@ -12,6 +13,7 @@ PARSERS = {
     "web": web_parser.parse_log_file,
     "fim": fim_parser.parse_log_file,
     "sonicwall": sonicwall_parser.parse_log_file,
+    "syslog": generic_syslog_parser.parse_log_file,
 }
 
 LINE_PARSERS = {
@@ -19,6 +21,7 @@ LINE_PARSERS = {
     "web": web_parser.parse_line,
     "fim": fim_parser.parse_line,
     "sonicwall": sonicwall_parser.parse_line,
+    "syslog": generic_syslog_parser.parse_line,
 }
 
 
@@ -70,6 +73,40 @@ def ingest_lines(agent: Agent, log_source: str, lines: list[str]) -> tuple[list[
 
     logger.info(
         f"Ingesta (líneas) {log_source} de {agent.hostname}: "
+        f"{len(events)} eventos, {unparsed} sin parsear"
+    )
+    return events, unparsed
+
+
+def ingest_lines_multi(
+    agent: Agent, lines: list[str],
+    parsers: list[Callable[[str], Optional[LogEvent]]],
+) -> tuple[list[LogEvent], int]:
+    """
+    Igual que ingest_lines, pero para un receptor que puede recibir más
+    de un formato en el mismo puerto (el receptor de syslog: puede
+    llegar auth.log real reenviado por rsyslog, un firewall SonicWall,
+    o cualquier otra cosa). Prueba cada parser en orden por línea y usa
+    el primero que matchee -- no hay un log_source fijo de antemano.
+    """
+    events = []
+    unparsed = 0
+
+    for line in lines:
+        event = None
+        for parser in parsers:
+            event = parser(line)
+            if event:
+                break
+        if event:
+            events.append(event)
+        else:
+            unparsed += 1
+
+    _tag_events(agent, events)
+
+    logger.info(
+        f"Ingesta (líneas, multi-formato) de {agent.hostname}: "
         f"{len(events)} eventos, {unparsed} sin parsear"
     )
     return events, unparsed
