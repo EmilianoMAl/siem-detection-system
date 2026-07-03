@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 from engine.agents import Agent
-from engine.parsers import auth_parser, web_parser, fim_parser
+from engine.parsers import auth_parser, web_parser, fim_parser, sonicwall_parser
 from engine.parsers.auth_parser import LogEvent
 
 logger = logging.getLogger(__name__)
@@ -11,18 +11,21 @@ PARSERS = {
     "ssh": auth_parser.parse_log_file,
     "web": web_parser.parse_log_file,
     "fim": fim_parser.parse_log_file,
+    "sonicwall": sonicwall_parser.parse_log_file,
 }
 
 LINE_PARSERS = {
     "ssh": auth_parser.parse_line,
     "web": web_parser.parse_line,
     "fim": fim_parser.parse_line,
+    "sonicwall": sonicwall_parser.parse_line,
 }
 
 
 def _tag_events(agent: Agent, events: list[LogEvent]) -> None:
     for event in events:
         event.agent_id = agent.agent_id
+        event.environment = agent.environment
         if not event.hostname:
             event.hostname = agent.hostname
 

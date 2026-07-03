@@ -29,7 +29,8 @@ class LogEvent:
     command:        Optional[str]   # solo para eventos sudo
     parsed_at:      str = ""
     agent_id:       Optional[str] = None
-    log_source:     str = "ssh"     # "ssh" | "web" | "fim"
+    log_source:     str = "ssh"     # "ssh" | "web" | "fim" | "sonicwall"
+    environment:    str = "simulated"   # "simulated" | "real_vm" -- lo tagea pipeline._tag_events
     metadata:       dict = field(default_factory=dict)
 
     def __post_init__(self):

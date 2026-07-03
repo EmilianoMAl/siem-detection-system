@@ -183,3 +183,38 @@ def test_run_all_rules_combines_every_source():
 
     assert "WEB_ATTACK_PAYLOAD" in rule_names
     assert "FIM_CRITICAL_FILE_CHANGE" in rule_names
+
+
+def test_sonicwall_repeated_denials_triggers_above_threshold():
+    events = [
+        make_event(
+            log_source="sonicwall", event_type="login_denied", username=None,
+            source_ip="172.16.140.73", environment="real_vm",
+        )
+        for _ in range(6)
+    ]
+    engine = DetectionEngine()
+
+    alerts = engine.detect_sonicwall_repeated_denials(events)
+
+    assert len(alerts) == 1
+    assert alerts[0].rule_name == "SONICWALL_REPEATED_DENIALS"
+    assert alerts[0].severity == "HIGH"
+    assert alerts[0].environment == "real_vm"
+
+
+def test_sonicwall_repeated_denials_ignores_other_log_sources():
+    events = [make_event(event_type="failed_password") for _ in range(10)]
+    engine = DetectionEngine()
+
+    assert engine.detect_sonicwall_repeated_denials(events) == []
+
+
+def test_sonicwall_repeated_denials_below_threshold_does_not_trigger():
+    events = [
+        make_event(log_source="sonicwall", event_type="connection_denied", source_ip="1.2.3.4")
+        for _ in range(2)
+    ]
+    engine = DetectionEngine()
+
+    assert engine.detect_sonicwall_repeated_denials(events) == []

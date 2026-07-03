@@ -152,13 +152,15 @@ def test_update_and_delete_missing_dashboard_return_false():
     assert storage.delete_dashboard(999) is False
 
 
-def make_alert(alert_id: str) -> Alert:
-    return Alert(
+def make_alert(alert_id: str, **overrides) -> Alert:
+    defaults = dict(
         alert_id=alert_id, rule_name="SSH_BRUTE_FORCE", severity="HIGH",
         description="test", source_ip="1.2.3.4", username="root",
         hostname="prod-server-01", evidence=["line1"],
         recommendation="block ip", mitre_technique="T1110",
     )
+    defaults.update(overrides)
+    return Alert(**defaults)
 
 
 def test_get_max_alert_counter_empty_db_returns_zero():
@@ -469,3 +471,107 @@ def test_query_alerts_custom_range_excludes_alerts_outside_window():
     )
 
     assert {row["alert_id"] for row in result} == {"ALERT-0001"}
+
+
+def test_environment_clause_all_has_no_filter():
+    clause, params = storage._environment_clause("ALL")
+
+    assert clause == ""
+    assert params == ()
+
+
+def test_environment_clause_filters_by_value():
+    clause, params = storage._environment_clause("real_vm")
+
+    assert clause == "AND environment = ?"
+    assert params == ("real_vm",)
+
+
+def test_environment_clause_custom_column():
+    clause, params = storage._environment_clause("real_vm", column="a.environment")
+
+    assert clause == "AND a.environment = ?"
+
+
+def test_new_events_default_to_simulated_environment():
+    storage.insert_events([make_event()])
+
+    summary = storage.query_summary(environment="simulated")
+    assert summary["total_events"] == 1
+    assert storage.query_summary(environment="real_vm")["total_events"] == 0
+
+
+def test_query_summary_filters_by_environment():
+    storage.insert_events([
+        make_event(source_ip="1.1.1.1", environment="simulated"),
+        make_event(source_ip="2.2.2.2", environment="real_vm"),
+    ])
+
+    assert storage.query_summary(environment="simulated")["total_events"] == 1
+    assert storage.query_summary(environment="real_vm")["total_events"] == 1
+    assert storage.query_summary(environment="ALL")["total_events"] == 2
+
+
+def test_query_top_ips_filters_by_environment():
+    storage.insert_events([
+        make_event(source_ip="1.1.1.1", environment="simulated"),
+        make_event(source_ip="2.2.2.2", environment="real_vm"),
+    ])
+
+    real_ips = {row["source_ip"] for row in storage.query_top_ips(environment="real_vm")}
+    assert real_ips == {"2.2.2.2"}
+
+
+def test_query_alerts_filters_by_environment():
+    storage.insert_alerts([
+        make_alert("ALERT-0001", environment="simulated"),
+        make_alert("ALERT-0002", environment="real_vm"),
+    ])
+
+    real_alerts = storage.query_alerts(environment="real_vm")
+    assert [a["alert_id"] for a in real_alerts] == ["ALERT-0002"]
+
+
+def test_query_agents_filters_by_environment():
+    from engine.agents import Agent
+
+    storage.register_agents([
+        Agent(agent_id="agent-001", hostname="sim-host", ip_address="10.0.0.1",
+              os="Linux", log_sources=["ssh"], environment="simulated"),
+        Agent(agent_id="agent-real-vm", hostname="real-host", ip_address="1.2.3.4",
+              os="Linux", log_sources=["ssh"], environment="real_vm"),
+    ])
+
+    real_agents = storage.query_agents(environment="real_vm")
+    assert [a["agent_id"] for a in real_agents] == ["agent-real-vm"]
+
+
+def test_query_mitre_coverage_filters_by_environment():
+    storage.insert_alerts([
+        make_alert("ALERT-0001", mitre_technique="T1110 - Brute Force", environment="simulated"),
+        make_alert("ALERT-0002", mitre_technique="T1110 - Brute Force", environment="real_vm"),
+    ])
+
+    result = storage.query_mitre_coverage(environment="real_vm")
+    assert result == [{"technique_id": "T1110", "count": 1}]
+
+
+def test_migration_backfills_environment_for_known_real_agents():
+    """
+    Simula una fila insertada sin pasar por el pipeline (environment
+    default 'simulated') para un agente real conocido -- initialize_db()
+    debe corregirla a 'real_vm' vía el backfill por agent_id/hostname.
+    """
+    from engine.agents import Agent, REAL_AGENT_ID
+
+    storage.register_agents([
+        Agent(agent_id=REAL_AGENT_ID, hostname="real-host", ip_address="1.2.3.4",
+              os="Linux", log_sources=["ssh"], environment="simulated")  # a propósito "mal" tageado
+    ])
+    storage.insert_events([make_event(agent_id=REAL_AGENT_ID, environment="simulated")])
+
+    storage.initialize_db()
+
+    assert storage.query_summary(environment="real_vm")["total_events"] == 1
+    agents = storage.query_agents(environment="real_vm")
+    assert [a["agent_id"] for a in agents] == [REAL_AGENT_ID]

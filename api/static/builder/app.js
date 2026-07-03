@@ -69,7 +69,7 @@ function populateGroupByOptions() {
 function openModal(existingConfig = null) {
   editingWidgetId = existingConfig ? existingConfig.id : null;
   const cfg = existingConfig || {
-    title: "", dataset: "events", logSource: "ALL", severity: "ALL",
+    title: "", dataset: "events", logSource: "ALL", severity: "ALL", environment: "ALL",
     groupBy: dimensionsByDataset.events[0], chartType: "bar", limit: 10,
   };
 
@@ -78,6 +78,7 @@ function openModal(existingConfig = null) {
   populateGroupByOptions();
   el("cfg-log-source").value = cfg.logSource;
   el("cfg-severity").value = cfg.severity;
+  el("cfg-environment").value = cfg.environment || "ALL";
   el("cfg-group-by").value = cfg.groupBy;
   el("cfg-chart-type").value = cfg.chartType;
   el("cfg-limit").value = cfg.limit;
@@ -97,6 +98,7 @@ function readConfigFromModal() {
     dataset: el("cfg-dataset").value,
     logSource: el("cfg-log-source").value,
     severity: el("cfg-severity").value,
+    environment: el("cfg-environment").value,
     groupBy: el("cfg-group-by").value,
     chartType: el("cfg-chart-type").value,
     limit: parseInt(el("cfg-limit").value, 10) || 10,
@@ -147,6 +149,7 @@ async function renderWidget(id) {
       group_by: config.groupBy,
       log_source: config.logSource,
       severity: config.severity,
+      environment: config.environment || "ALL",
       limit: String(config.limit),
     });
     data = await apiGet(`/query?${params.toString()}`);

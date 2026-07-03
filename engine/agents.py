@@ -3,6 +3,11 @@ from dataclasses import dataclass
 
 
 REAL_AGENT_ID = "agent-real-vm"
+SYSLOG_AGENT_ID = "agent-syslog-fw"
+
+# agent_id de todo lo que representa datos REALES (no simulados) — se
+# usa para backfillear la columna environment en storage.initialize_db().
+REAL_AGENT_IDS = (REAL_AGENT_ID, SYSLOG_AGENT_ID)
 
 
 @dataclass
@@ -17,7 +22,8 @@ class Agent:
     hostname:    str
     ip_address:  str
     os:          str
-    log_sources: list[str]   # subconjunto de ("ssh", "web", "fim")
+    log_sources: list[str]   # subconjunto de ("ssh", "web", "fim", "sonicwall")
+    environment: str = "simulated"   # "simulated" | "real_vm"
 
 
 # Flota simulada por defecto. Cada agente sólo genera/reporta
@@ -76,15 +82,39 @@ def get_real_agent() -> Agent | None:
         ip_address=os.environ.get("SENTINEL_REAL_AGENT_IP", ""),
         os=os.environ.get("SENTINEL_REAL_AGENT_OS", "Linux"),
         log_sources=["ssh", "web"],
+        environment="real_vm",
+    )
+
+
+def get_syslog_agent() -> Agent:
+    """
+    Agente que representa al emisor de syslog externo (ej. un firewall
+    SonicWall en la red del trabajo del usuario) — todo lo que llega al
+    receptor de syslog (ver engine/syslog_listener.py) se atribuye a
+    este agente fijo. A diferencia de get_real_agent(), siempre existe
+    (con defaults razonables) porque no requiere ningún secreto — el
+    puerto de syslog en sí ya está protegido por firewall (ufw/OCI),
+    no por un token como /ingest.
+    """
+    return Agent(
+        agent_id=os.environ.get("SENTINEL_SYSLOG_AGENT_ID", SYSLOG_AGENT_ID),
+        hostname=os.environ.get("SENTINEL_SYSLOG_HOSTNAME", "sonicwall-fw"),
+        ip_address=os.environ.get("SENTINEL_SYSLOG_IP", ""),
+        os="SonicOS",
+        log_sources=["sonicwall"],
+        environment="real_vm",
     )
 
 
 def find_known_agent(agent_id: str) -> Agent | None:
-    """Busca por id entre los agentes simulados o el agente real configurado."""
+    """Busca por id entre los agentes simulados, el agente real o el de syslog."""
     agent = get_agent(agent_id)
     if agent:
         return agent
     real_agent = get_real_agent()
     if real_agent and real_agent.agent_id == agent_id:
         return real_agent
+    syslog_agent = get_syslog_agent()
+    if syslog_agent.agent_id == agent_id:
+        return syslog_agent
     return None

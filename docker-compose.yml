@@ -5,6 +5,11 @@ services:
       dockerfile: api/Dockerfile
     ports:
       - "127.0.0.1:8000:8000"
+      # A diferencia del puerto de arriba, este SÍ debe ser alcanzable
+      # desde fuera de la VM (no 127.0.0.1) -- syslog no es HTTP, no
+      # puede pasar por Nginx/Basic Auth. El acceso se restringe en el
+      # firewall (ufw/OCI Security List), ver DEPLOYMENT.md.
+      - "514:8514/udp"
     volumes:
       - ./data:/app/data
     environment:
@@ -13,6 +18,10 @@ services:
       - SENTINEL_REAL_AGENT_IP=${SENTINEL_REAL_AGENT_IP:-}
       - SENTINEL_REAL_AGENT_OS=${SENTINEL_REAL_AGENT_OS:-}
       - SENTINEL_SIMULATION_TICK_SECONDS=${SENTINEL_SIMULATION_TICK_SECONDS:-300}
+      - SENTINEL_SYSLOG_PORT=${SENTINEL_SYSLOG_PORT:-8514}
+      - SENTINEL_SYSLOG_AGENT_ID=${SENTINEL_SYSLOG_AGENT_ID:-}
+      - SENTINEL_SYSLOG_HOSTNAME=${SENTINEL_SYSLOG_HOSTNAME:-}
+      - SENTINEL_SYSLOG_IP=${SENTINEL_SYSLOG_IP:-}
     restart: unless-stopped
 
   dashboard:

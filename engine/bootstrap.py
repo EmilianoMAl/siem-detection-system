@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from engine.agents import Agent, SIMULATED_AGENTS, get_real_agent
+from engine.agents import Agent, SIMULATED_AGENTS, get_real_agent, get_syslog_agent
 from engine.log_generator import run_generator
 from engine.pipeline import ingest_agent_logs
 from engine.detectors.rules import DetectionEngine
@@ -27,6 +27,9 @@ def bootstrap_data() -> None:
     if real_agent:
         register_agents([real_agent])
         logger.info(f"Agente real registrado: {real_agent.hostname} ({real_agent.agent_id})")
+
+    syslog_agent = get_syslog_agent()
+    register_agents([syslog_agent])
 
     conn = get_connection()
     count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]

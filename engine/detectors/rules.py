@@ -29,6 +29,7 @@ class Alert:
     recommendation:  str
     detected_at:     str = ""
     mitre_technique: str = ""   # MITRE ATT&CK mapping
+    environment:     str = "simulated"   # "simulated" | "real_vm" -- heredado de los eventos que la dispararon
 
     def __post_init__(self):
         self.detected_at = datetime.now().isoformat()
@@ -103,7 +104,8 @@ class DetectionEngine:
                         f"Bloquear IP {ip} en firewall inmediatamente. "
                         f"Revisar si algún intento fue exitoso desde esta IP."
                     ),
-                    mitre_technique="T1110 - Brute Force"
+                    mitre_technique="T1110 - Brute Force",
+                    environment=failed_events[0].environment,
                 )
                 alerts.append(alert)
                 logger.warning(
@@ -152,7 +154,8 @@ class DetectionEngine:
                         f"Verificar si el comando fue autorizado. "
                         f"Considerar revocar privilegios sudo temporalmente."
                     ),
-                    mitre_technique="T1548 - Abuse Elevation Control Mechanism"
+                    mitre_technique="T1548 - Abuse Elevation Control Mechanism",
+                    environment=event.environment,
                 )
                 alerts.append(alert)
                 logger.warning(
@@ -204,7 +207,8 @@ class DetectionEngine:
                             f"reconoce este acceso desde {event.source_ip}. "
                             f"Considerar deshabilitar cuenta y forzar cambio de contraseña."
                         ),
-                        mitre_technique="T1078 - Valid Accounts"
+                        mitre_technique="T1078 - Valid Accounts",
+                        environment=event.environment,
                     )
                     alerts.append(alert)
                     logger.critical(
@@ -251,7 +255,8 @@ class DetectionEngine:
                         f"Bloquear IP {event.source_ip} en el WAF/firewall. "
                         f"Revisar logs de la aplicación por posible explotación exitosa."
                     ),
-                    mitre_technique="T1190 - Exploit Public-Facing Application"
+                    mitre_technique="T1190 - Exploit Public-Facing Application",
+                    environment=event.environment,
                 )
                 alerts.append(alert)
                 logger.warning(f"🚨 [HIGH] WEB_ATTACK_PAYLOAD | ip={event.source_ip}")
@@ -297,7 +302,8 @@ class DetectionEngine:
                         f"Vigilar IP {ip} — patrón típico de directory brute-forcing. "
                         f"Considerar rate-limiting o bloqueo temporal."
                     ),
-                    mitre_technique="T1595 - Active Scanning"
+                    mitre_technique="T1595 - Active Scanning",
+                    environment=ip_events[0].environment,
                 )
                 alerts.append(alert)
                 logger.warning(f"🚨 [{severity}] WEB_RECON_SCAN | ip={ip}")
@@ -345,10 +351,64 @@ class DetectionEngine:
                         f"Verificar si el cambio en {file_path} fue autorizado. "
                         f"Comparar hash_before/hash_after y restaurar desde backup si es necesario."
                     ),
-                    mitre_technique=technique
+                    mitre_technique=technique,
+                    environment=event.environment,
                 )
                 alerts.append(alert)
                 logger.critical(f"🔴 [CRITICAL] FIM_CRITICAL_FILE_CHANGE | path={file_path}")
+
+        return alerts
+
+    # ------------------------------------------------------------------
+    # SONICWALL
+    # ------------------------------------------------------------------
+
+    def detect_sonicwall_repeated_denials(self, events: list[LogEvent]) -> list[Alert]:
+        """
+        Regla: Detecta rechazos repetidos (login/conexión denegada) desde
+        la misma IP en el firewall SonicWall real — mismo esquema que
+        detect_brute_force pero sobre log_source="sonicwall".
+
+        MITRE ATT&CK: T1110 - Brute Force
+        """
+        cfg = self.config["sonicwall_denials"]
+        alerts = []
+        denials_by_ip = defaultdict(list)
+
+        for event in events:
+            if event.log_source != "sonicwall":
+                continue
+            if event.event_type in ("login_denied", "connection_denied"):
+                if event.source_ip:
+                    denials_by_ip[event.source_ip].append(event)
+
+        for ip, denial_events in denials_by_ip.items():
+            if len(denial_events) >= cfg["fail_threshold"]:
+                severity = "CRITICAL" if len(denial_events) >= cfg["critical_threshold"] else "HIGH"
+                alert = Alert(
+                    alert_id=self._new_alert_id(),
+                    rule_name="SONICWALL_REPEATED_DENIALS",
+                    severity=severity,
+                    description=(
+                        f"Rechazos repetidos en firewall SonicWall desde {ip}. "
+                        f"{len(denial_events)} intentos denegados."
+                    ),
+                    source_ip=ip,
+                    username=None,
+                    hostname=denial_events[0].hostname,
+                    evidence=[e.raw_line for e in denial_events[:5]],
+                    recommendation=(
+                        f"Bloquear IP {ip} en el firewall. "
+                        f"Revisar la política que está denegando estos intentos."
+                    ),
+                    mitre_technique="T1110 - Brute Force",
+                    environment=denial_events[0].environment,
+                )
+                alerts.append(alert)
+                logger.warning(
+                    f"🚨 [{severity}] SONICWALL_REPEATED_DENIALS | "
+                    f"ip={ip} | intentos={len(denial_events)}"
+                )
 
         return alerts
 
@@ -369,6 +429,7 @@ class DetectionEngine:
         all_alerts.extend(self.detect_web_attacks(events))
         all_alerts.extend(self.detect_recon_scan(events))
         all_alerts.extend(self.detect_fim_critical_change(events))
+        all_alerts.extend(self.detect_sonicwall_repeated_denials(events))
 
         severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
         all_alerts.sort(key=lambda a: severity_order.get(a.severity, 4))

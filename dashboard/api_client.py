@@ -24,8 +24,9 @@ def get_health() -> dict:
 def get_summary(
     log_source: str = "ALL", time_range: str = "all",
     start: str | None = None, end: str | None = None,
+    environment: str = "ALL",
 ) -> dict:
-    params = {"log_source": log_source, "time_range": time_range}
+    params = {"log_source": log_source, "time_range": time_range, "environment": environment}
     if start:
         params["start"] = start
     if end:
@@ -36,8 +37,9 @@ def get_summary(
 def get_alerts(
     status: str | None = None, time_range: str = "all",
     start: str | None = None, end: str | None = None,
+    environment: str = "ALL",
 ) -> list[dict]:
-    params = {"time_range": time_range}
+    params = {"time_range": time_range, "environment": environment}
     if status:
         params["status"] = status
     if start:
@@ -51,15 +53,16 @@ def update_alert_status(alert_id: str, status: str, note: str | None = None) -> 
     return _patch(f"/alerts/{alert_id}", {"status": status, "note": note})
 
 
-def get_agents() -> list[dict]:
-    return _get("/agents")
+def get_agents(environment: str = "ALL") -> list[dict]:
+    return _get("/agents", {"environment": environment})
 
 
 def get_top_ips(
     log_source: str = "ALL", time_range: str = "all",
     start: str | None = None, end: str | None = None,
+    environment: str = "ALL",
 ) -> list[dict]:
-    params = {"log_source": log_source, "time_range": time_range}
+    params = {"log_source": log_source, "time_range": time_range, "environment": environment}
     if start:
         params["start"] = start
     if end:
@@ -70,8 +73,9 @@ def get_top_ips(
 def get_event_types(
     log_source: str = "ALL", time_range: str = "all",
     start: str | None = None, end: str | None = None,
+    environment: str = "ALL",
 ) -> list[dict]:
-    params = {"log_source": log_source, "time_range": time_range}
+    params = {"log_source": log_source, "time_range": time_range, "environment": environment}
     if start:
         params["start"] = start
     if end:
@@ -82,8 +86,9 @@ def get_event_types(
 def get_timeline(
     log_source: str = "ALL", time_range: str = "all",
     start: str | None = None, end: str | None = None,
+    environment: str = "ALL",
 ) -> list[dict]:
-    params = {"log_source": log_source, "time_range": time_range}
+    params = {"log_source": log_source, "time_range": time_range, "environment": environment}
     if start:
         params["start"] = start
     if end:
@@ -91,9 +96,9 @@ def get_timeline(
     return _get("/timeline", params)
 
 
-def get_mitre_coverage() -> list[dict]:
-    return _get("/mitre-coverage")
+def get_mitre_coverage(environment: str = "ALL") -> list[dict]:
+    return _get("/mitre-coverage", {"environment": environment})
 
 
-def get_geo_attackers() -> list[dict]:
-    return _get("/geo-attackers")
+def get_geo_attackers(environment: str = "ALL") -> list[dict]:
+    return _get("/geo-attackers", {"environment": environment})

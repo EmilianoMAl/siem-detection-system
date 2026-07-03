@@ -37,6 +37,10 @@ DEFAULT_RULES_CONFIG: dict[str, Any] = {
             "/root/.ssh/authorized_keys", "/home/*/.ssh/authorized_keys",
         ],
     },
+    "sonicwall_denials": {
+        "fail_threshold": 5,
+        "critical_threshold": 20,
+    },
 }
 
 

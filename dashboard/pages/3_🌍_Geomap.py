@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import requests
 
 import api_client
-from theme import inject_theme, sidebar_brand
+from theme import inject_theme, sidebar_brand, workspace_selector
 
 st.set_page_config(
     page_title="SENTINEL — Geomap",
@@ -32,6 +32,8 @@ except requests.exceptions.RequestException:
 
 with st.sidebar:
     sidebar_brand()
+    environment = workspace_selector()
+    st.markdown("---")
     st.markdown('<div class="section-label">Navigation</div>', unsafe_allow_html=True)
     st.markdown(
         "<div class='muted-text'>Home — arriba en el sidebar</div>"
@@ -57,7 +59,7 @@ st.markdown("""
 st.markdown("---")
 
 with st.spinner("Geolocalizando IPs nuevas…"):
-    geo = api_client.get_geo_attackers()
+    geo = api_client.get_geo_attackers(environment)
 
 if not geo:
     st.markdown(

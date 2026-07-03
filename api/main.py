@@ -14,6 +14,7 @@ from engine.bootstrap import bootstrap_data, simulate_tick
 from engine.detectors.rules import DetectionEngine
 from engine.mitre_reference import MITRE_REFERENCE
 from engine.pipeline import ingest_lines, LINE_PARSERS
+from engine.syslog_listener import start_syslog_listener
 from engine.storage import (
     query_summary, query_alerts, query_agents,
     query_top_ips, query_event_types, query_timeline,
@@ -41,12 +42,14 @@ LogSource = Literal["ALL", "SSH", "WEB", "FIM"]
 Severity = Literal["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"]
 Dataset = Literal["events", "alerts"]
 TimeRange = Literal["1h", "24h", "7d", "30d", "365d", "all", "custom"]
+Environment = Literal["ALL", "simulated", "real_vm"]
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 INGEST_TOKEN = os.environ.get("SENTINEL_INGEST_TOKEN", "")
 MAX_INGEST_LINES = 500
 SIMULATION_TICK_SECONDS = int(os.environ.get("SENTINEL_SIMULATION_TICK_SECONDS", 300))
+SYSLOG_PORT = int(os.environ.get("SENTINEL_SYSLOG_PORT", 8514))
 
 
 async def _simulation_loop():
@@ -70,8 +73,11 @@ async def lifespan(app: FastAPI):
     bootstrap_data()
 
     task = asyncio.create_task(_simulation_loop())
+    syslog_transport, syslog_flush_task = await start_syslog_listener(SYSLOG_PORT)
     yield
     task.cancel()
+    syslog_flush_task.cancel()
+    syslog_transport.close()
 
 
 app = FastAPI(
@@ -102,8 +108,9 @@ def health() -> dict:
 def get_summary(
     log_source: LogSource = "ALL", time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
+    environment: Environment = "ALL",
 ) -> dict:
-    return query_summary(log_source, time_range, start, end)
+    return query_summary(log_source, time_range, start, end, environment)
 
 
 AlertStatus = Literal["OPEN", "ACKNOWLEDGED", "CLOSED"]
@@ -113,8 +120,12 @@ AlertStatus = Literal["OPEN", "ACKNOWLEDGED", "CLOSED"]
 def get_alerts(
     status: AlertStatus | None = None, time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
+    environment: Environment = "ALL",
 ) -> list[dict]:
-    return query_alerts(status=status, time_range=time_range, start=start, end=end, limit=500)
+    return query_alerts(
+        status=status, time_range=time_range, start=start, end=end,
+        environment=environment, limit=500,
+    )
 
 
 @router.patch("/alerts/{alert_id}", response_model=AlertResponse)
@@ -126,32 +137,35 @@ def patch_alert(alert_id: str, body: AlertStatusUpdate) -> dict:
 
 
 @router.get("/agents", response_model=list[AgentResponse])
-def get_agents() -> list[dict]:
-    return query_agents()
+def get_agents(environment: Environment = "ALL") -> list[dict]:
+    return query_agents(environment)
 
 
 @router.get("/top-ips", response_model=list[TopIpResponse])
 def get_top_ips(
     log_source: LogSource = "ALL", time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
+    environment: Environment = "ALL",
 ) -> list[dict]:
-    return query_top_ips(log_source, time_range=time_range, start=start, end=end)
+    return query_top_ips(log_source, time_range=time_range, start=start, end=end, environment=environment)
 
 
 @router.get("/event-types", response_model=list[EventTypeResponse])
 def get_event_types(
     log_source: LogSource = "ALL", time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
+    environment: Environment = "ALL",
 ) -> list[dict]:
-    return query_event_types(log_source, time_range, start, end)
+    return query_event_types(log_source, time_range, start, end, environment)
 
 
 @router.get("/timeline", response_model=list[TimelinePointResponse])
 def get_timeline(
     log_source: LogSource = "ALL", time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
+    environment: Environment = "ALL",
 ) -> list[dict]:
-    return query_timeline(log_source, time_range, start, end)
+    return query_timeline(log_source, time_range, start, end, environment)
 
 
 @router.get("/query-dimensions")
@@ -161,8 +175,8 @@ def get_query_dimensions() -> dict:
 
 
 @router.get("/mitre-coverage", response_model=list[MitreTechniqueResponse])
-def get_mitre_coverage() -> list[dict]:
-    counts = {row["technique_id"]: row["count"] for row in query_mitre_coverage()}
+def get_mitre_coverage(environment: Environment = "ALL") -> list[dict]:
+    counts = {row["technique_id"]: row["count"] for row in query_mitre_coverage(environment)}
     return [
         {
             "tactic": tactic,
@@ -175,8 +189,8 @@ def get_mitre_coverage() -> list[dict]:
 
 
 @router.get("/geo-attackers", response_model=list[GeoAttackerResponse])
-def get_geo_attackers() -> list[dict]:
-    return get_attacker_geo()
+def get_geo_attackers(environment: Environment = "ALL") -> list[dict]:
+    return get_attacker_geo(environment=environment)
 
 
 @router.get("/query", response_model=list[QueryPointResponse])
@@ -185,10 +199,14 @@ def run_query(
     group_by: str,
     log_source: LogSource = "ALL",
     severity: Severity = "ALL",
+    environment: Environment = "ALL",
     limit: int = 10,
 ) -> list[dict]:
     try:
-        return query_generic(dataset, group_by, log_source=log_source, severity=severity, limit=limit)
+        return query_generic(
+            dataset, group_by, log_source=log_source, severity=severity,
+            environment=environment, limit=limit,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

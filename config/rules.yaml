@@ -43,3 +43,7 @@ fim_critical_change:
     - "/etc/ssh/sshd_config"
     - "/root/.ssh/authorized_keys"
     - "/home/*/.ssh/authorized_keys"
+
+sonicwall_denials:
+  fail_threshold: 5          # rechazos desde 1 IP para disparar la alerta
+  critical_threshold: 20     # a partir de aquí la severidad sube a CRITICAL

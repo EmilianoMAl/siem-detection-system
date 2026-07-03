@@ -253,3 +253,22 @@ def sidebar_brand() -> None:
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+
+WORKSPACE_LABELS = {"Todo": "ALL", "Simulado": "simulated", "VM real": "real_vm"}
+
+
+def workspace_selector() -> str:
+    """
+    Selector de workspace (Todo / Simulado / VM real) compartido por las
+    4 páginas del dashboard. Usa key="workspace_label" para que
+    Streamlit persista la selección entre páginas dentro de la misma
+    sesión de navegador -- no hace falta pasar el valor a mano de una
+    página a otra.
+    """
+    st.markdown('<div class="section-label">Workspace</div>', unsafe_allow_html=True)
+    label = st.selectbox(
+        "Workspace", list(WORKSPACE_LABELS.keys()),
+        key="workspace_label", label_visibility="collapsed",
+    )
+    return WORKSPACE_LABELS[label]

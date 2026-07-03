@@ -289,6 +289,57 @@ segundos. En el dashboard, el agente `agent-real-vm` va a pasar de
 > trade-off razonable, pero en un entorno más sensible conviene un usuario
 > dedicado con permisos mínimos.
 
+## 12. Syslog real: recibir logs de otra computadora (ej. un firewall SonicWall)
+
+A diferencia del agente real (sección 11, que manda logs de esta misma
+VM), esto es para recibir logs de **otro equipo** — típicamente un
+firewall en tu trabajo, configurado para mandar syslog a esta VM. La
+API ya trae un receptor de syslog (UDP 514) corriendo como tarea de
+fondo (`engine/syslog_listener.py`) — no hace falta instalar nada
+adicional en la VM, solo abrir el puerto con cuidado.
+
+**⚠️ Este puerto NO pasa por Nginx ni por su contraseña** — syslog no
+es HTTP, así que el Basic Auth del resto del sitio no aplica aquí. La
+única protección real es el firewall, restringido a la IP/rango desde
+donde de verdad vas a mandar tráfico.
+
+**12.1 — Abre el puerto 514/UDP, restringido a tu origen conocido.**
+Primero en la **OCI Security List** (Networking → VCN → Security Lists
+→ Add Ingress Rule): protocolo UDP, puerto 514, "Source" = el CIDR de
+tu red de trabajo (no `0.0.0.0/0`). Luego en `ufw`:
+```bash
+sudo ufw allow from <CIDR_RED_TRABAJO> to any port 514 proto udp
+sudo ufw status verbose   # confirma que 514/udp NO quedó abierto a "Anywhere"
+```
+Si todavía no sabes el CIDR exacto, puedes abrirlo temporalmente a
+cualquier origen (`sudo ufw allow 514/udp`) y restringirlo en cuanto lo
+tengas — pero ten en cuenta que mientras tanto cualquiera en internet
+podría mandarte syslog falso (se descarta solo si no matchea el
+formato de SonicWall, no hay autenticación posible en el protocolo).
+
+**12.2 — Configura la identidad del emisor** en `.env` (opcional — si
+no se configura, se usan los defaults `agent-syslog-fw`/`sonicwall-fw`):
+```bash
+# En .env:
+SENTINEL_SYSLOG_AGENT_ID=agent-syslog-fw
+SENTINEL_SYSLOG_HOSTNAME=sonicwall-fw
+SENTINEL_SYSLOG_IP=<ip-del-firewall-en-tu-trabajo>
+```
+Aplica con `docker compose up -d` (recrea `api` con las nuevas
+variables y publica el puerto 514/udp definido en `docker-compose.yml`).
+
+**12.3 — Configura el SonicWall (o lo que mande los logs)** para
+enviar syslog a `<ip-publica-de-esta-VM>:514` sobre UDP — esto se hace
+del lado del firewall/dispositivo, no en esta VM.
+
+**12.4 — Verifica que esté llegando**:
+```bash
+docker compose logs -f api | grep -i syslog
+```
+Las líneas se agrupan y procesan cada 15 segundos (igual que el agente
+real agrupa por lotes) — en el dashboard, cambia el selector "Workspace"
+a "VM real" para ver solo estos datos, separados de la simulación.
+
 ---
 
 ## Troubleshooting

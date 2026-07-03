@@ -12,7 +12,7 @@ import pandas as pd
 import requests
 
 import api_client
-from theme import inject_theme, sidebar_brand
+from theme import inject_theme, sidebar_brand, workspace_selector
 
 st.set_page_config(
     page_title="SENTINEL — Agents",
@@ -33,6 +33,8 @@ except requests.exceptions.RequestException:
 
 with st.sidebar:
     sidebar_brand()
+    environment = workspace_selector()
+    st.markdown("---")
     st.markdown('<div class="section-label">Navigation</div>', unsafe_allow_html=True)
     st.markdown(
         "<div class='muted-text'>Home — arriba en el sidebar</div>"
@@ -57,7 +59,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.markdown("---")
 
-agents = api_client.get_agents()
+agents = api_client.get_agents(environment)
 
 k1, k2, k3 = st.columns(3)
 active = sum(1 for a in agents if a["status"] == "ACTIVE")

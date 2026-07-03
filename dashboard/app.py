@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -5,7 +6,7 @@ import requests
 from datetime import datetime, timedelta, timezone, time as dtime
 
 import api_client
-from theme import inject_theme, sidebar_brand, PLOTLY, EVENT_COLORS, SEVERITY_CLASS
+from theme import inject_theme, sidebar_brand, workspace_selector, PLOTLY, EVENT_COLORS, SEVERITY_CLASS
 
 RULE_SOURCE = {
     "SSH_BRUTE_FORCE": "ssh",
@@ -14,7 +15,48 @@ RULE_SOURCE = {
     "WEB_ATTACK_PAYLOAD": "web",
     "WEB_RECON_SCAN": "web",
     "FIM_CRITICAL_FILE_CHANGE": "fim",
+    "SONICWALL_REPEATED_DENIALS": "sonicwall",
 }
+
+# Mapeos usados solo para la vista "estilo Wazuh" (formato campo: valor
+# que el usuario ya conoce de su trabajo) -- aproximaciones razonables,
+# no hay un mapeo 1:1 oficial entre las reglas de SENTINEL y Wazuh.
+DECODER_NAME = {"ssh": "sshd", "web": "web-accesslog", "fim": "syscheck", "sonicwall": "sonicwall"}
+SEVERITY_TO_LEVEL = {"CRITICAL": 15, "HIGH": 10, "MEDIUM": 7, "LOW": 3}
+
+
+def format_wazuh_style(alert: dict) -> str:
+    """
+    Arma un bloque "campo: valor" parecido al que produce Wazuh para sus
+    alertas (rule.level, data.srcip, full_log, etc.) -- full_log usa la
+    primera línea de evidencia cruda que ya guarda la alerta, que para
+    alertas de SonicWall es literalmente la línea de syslog original.
+    """
+    source = alert.get("source", "ssh")
+    full_log = ""
+    if alert.get("evidence"):
+        try:
+            lines = json.loads(alert["evidence"])
+            full_log = lines[0] if lines else ""
+        except (json.JSONDecodeError, TypeError):
+            full_log = str(alert["evidence"])
+
+    fields = [
+        ("input.type", "log"),
+        ("agent.name", alert.get("hostname") or "unknown"),
+        ("manager.name", "sentinel-siem"),
+        ("data.srcip", alert.get("source_ip") or "-"),
+        ("data.action", alert["description"]),
+        ("rule.level", SEVERITY_TO_LEVEL.get(alert["severity"], 5)),
+        ("rule.description", alert["description"]),
+        ("rule.groups", f"syslog, {source}"),
+        ("rule.id", alert["alert_id"]),
+        ("location", alert.get("hostname") or "-"),
+        ("decoder.name", DECODER_NAME.get(source, source)),
+        ("id", alert["alert_id"]),
+        ("full_log", full_log),
+    ]
+    return "\n".join(f"{key}: {value}" for key, value in fields)
 
 TIME_RANGE_LABELS = {
     "Todo el tiempo": "all",
@@ -47,13 +89,13 @@ except requests.exceptions.RequestException:
 
 # ── DATA LAYER — el dashboard es un cliente puro de la API, no toca SQLite ──
 @st.cache_data(ttl=30)
-def load_summary(source: str, time_range: str, start: str | None = None, end: str | None = None):
-    return api_client.get_summary(source, time_range, start, end)
+def load_summary(source: str, time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL"):
+    return api_client.get_summary(source, time_range, start, end, environment)
 
 
 @st.cache_data(ttl=30)
-def load_alerts(time_range: str, start: str | None = None, end: str | None = None):
-    alerts = api_client.get_alerts(time_range=time_range, start=start, end=end)
+def load_alerts(time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL"):
+    alerts = api_client.get_alerts(time_range=time_range, start=start, end=end, environment=environment)
     for a in alerts:
         a["source"] = RULE_SOURCE.get(a["rule_name"], "ssh")
     return alerts
@@ -69,8 +111,8 @@ def act_on_alert(alert_id: str, status: str):
 
 
 @st.cache_data(ttl=30)
-def load_top_ips(source: str, time_range: str, start: str | None = None, end: str | None = None):
-    rows = api_client.get_top_ips(source, time_range, start, end)
+def load_top_ips(source: str, time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL"):
+    rows = api_client.get_top_ips(source, time_range, start, end, environment)
     return pd.DataFrame(
         [(r["source_ip"], r["attempts"], r["targeted_users"]) for r in rows],
         columns=["IP", "Intentos", "Usuarios objetivo"],
@@ -78,14 +120,14 @@ def load_top_ips(source: str, time_range: str, start: str | None = None, end: st
 
 
 @st.cache_data(ttl=30)
-def load_event_types(source: str, time_range: str, start: str | None = None, end: str | None = None):
-    rows = api_client.get_event_types(source, time_range, start, end)
+def load_event_types(source: str, time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL"):
+    rows = api_client.get_event_types(source, time_range, start, end, environment)
     return pd.DataFrame([(r["event_type"], r["n"]) for r in rows], columns=["Tipo", "Count"])
 
 
 @st.cache_data(ttl=30)
-def load_timeline(source: str, time_range: str, start: str | None = None, end: str | None = None):
-    rows = api_client.get_timeline(source, time_range, start, end)
+def load_timeline(source: str, time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL"):
+    rows = api_client.get_timeline(source, time_range, start, end, environment)
     return pd.DataFrame(
         [(r["hour"], r["event_type"], r["n"]) for r in rows],
         columns=["Hora", "Tipo", "Count"],
@@ -96,6 +138,9 @@ def load_timeline(source: str, time_range: str, start: str | None = None, end: s
 with st.sidebar:
     sidebar_brand()
 
+    environment = workspace_selector()
+
+    st.markdown("---")
     st.markdown('<div class="section-label">Filters</div>', unsafe_allow_html=True)
     severity_filter = st.selectbox(
         "Severidad", ["ALL", "CRITICAL", "HIGH", "MEDIUM"],
@@ -140,7 +185,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown('<div class="section-label">System status</div>', unsafe_allow_html=True)
 
-    summary_for_status = load_summary(source_filter, time_range, start_str, end_str)
+    summary_for_status = load_summary(source_filter, time_range, start_str, end_str, environment)
     st.markdown(f"""
     <div style='background:var(--surface);border:1px solid var(--border);
                 border-radius:10px;padding:12px 14px;margin-bottom:10px'>
@@ -181,7 +226,7 @@ with st.sidebar:
 
 
 # ── HEADER ──
-summary = load_summary(source_filter, time_range, start_str, end_str)
+summary = load_summary(source_filter, time_range, start_str, end_str, environment)
 
 st.markdown(f"""
 <div style='display:flex;align-items:center;justify-content:space-between;
@@ -219,7 +264,7 @@ col_alerts, col_ips = st.columns([3, 2])
 
 with col_alerts:
     st.markdown('<div class="section-label">Active threat feed</div>', unsafe_allow_html=True)
-    alerts = load_alerts(time_range, start_str, end_str)
+    alerts = load_alerts(time_range, start_str, end_str, environment)
     filtered = alerts
     if not show_closed:
         filtered = [a for a in filtered if a.get("status", "OPEN") != "CLOSED"]
@@ -262,6 +307,8 @@ with col_alerts:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+                with st.expander("Ver como Wazuh"):
+                    st.code(format_wazuh_style(alert), language=None)
             with action_col:
                 if status == "OPEN":
                     st.button("Ack", key=f"ack_{alert['alert_id']}",
@@ -272,7 +319,7 @@ with col_alerts:
 
 with col_ips:
     st.markdown('<div class="section-label">Top attacking IPs</div>', unsafe_allow_html=True)
-    df_ips = load_top_ips(source_filter, time_range, start_str, end_str)
+    df_ips = load_top_ips(source_filter, time_range, start_str, end_str, environment)
     if not df_ips.empty:
         fig_ips = go.Figure(go.Bar(
             x=df_ips["Intentos"],
@@ -300,7 +347,7 @@ col_donut, col_timeline = st.columns([2, 3])
 
 with col_donut:
     st.markdown('<div class="section-label">Event distribution</div>', unsafe_allow_html=True)
-    df_types = load_event_types(source_filter, time_range, start_str, end_str)
+    df_types = load_event_types(source_filter, time_range, start_str, end_str, environment)
     if not df_types.empty:
         colors = [EVENT_COLORS.get(t, "#3A3B41") for t in df_types["Tipo"]]
         fig_donut = go.Figure(go.Pie(
@@ -328,7 +375,7 @@ with col_donut:
 
 with col_timeline:
     st.markdown('<div class="section-label">Event timeline</div>', unsafe_allow_html=True)
-    df_time = load_timeline(source_filter, time_range, start_str, end_str)
+    df_time = load_timeline(source_filter, time_range, start_str, end_str, environment)
     if not df_time.empty:
         fig_time = go.Figure()
         for etype in df_time["Tipo"].unique():

@@ -22,6 +22,7 @@ class AlertResponse(BaseModel):
     description: str
     source_ip: Optional[str] = None
     username: Optional[str] = None
+    hostname: Optional[str] = None
     mitre_technique: Optional[str] = None
     recommendation: Optional[str] = None
     detected_at: Optional[str] = None
