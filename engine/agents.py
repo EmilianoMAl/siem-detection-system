@@ -96,9 +96,13 @@ def get_syslog_agent() -> Agent:
     puerto de syslog en sí ya está protegido por firewall (ufw/OCI),
     no por un token como /ingest.
     """
+    # "or" en vez de os.environ.get(key, default): docker-compose pasa
+    # ${VAR:-} como string vacío (no como variable ausente) cuando no
+    # está definida en .env, y .get() solo usa el default si la key no
+    # existe -- con un valor vacío ya "existe" y pisaría el default.
     return Agent(
-        agent_id=os.environ.get("SENTINEL_SYSLOG_AGENT_ID", SYSLOG_AGENT_ID),
-        hostname=os.environ.get("SENTINEL_SYSLOG_HOSTNAME", "sonicwall-fw"),
+        agent_id=os.environ.get("SENTINEL_SYSLOG_AGENT_ID") or SYSLOG_AGENT_ID,
+        hostname=os.environ.get("SENTINEL_SYSLOG_HOSTNAME") or "sonicwall-fw",
         ip_address=os.environ.get("SENTINEL_SYSLOG_IP", ""),
         os="SonicOS",
         log_sources=["sonicwall"],
