@@ -50,6 +50,23 @@ class AgentResponse(BaseModel):
     alert_count: int
 
 
+class EventResponse(BaseModel):
+    id: int
+    timestamp: Optional[str] = None
+    hostname: Optional[str] = None
+    agent_id: Optional[str] = None
+    log_source: Optional[str] = None
+    service: Optional[str] = None
+    event_type: str
+    username: Optional[str] = None
+    source_ip: Optional[str] = None
+    source_port: Optional[int] = None
+    command: Optional[str] = None
+    metadata: Optional[str] = None  # JSON string, tal como se guarda en SQLite
+    raw_line: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 class TopIpResponse(BaseModel):
     source_ip: str
     attempts: int

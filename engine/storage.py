@@ -370,6 +370,36 @@ def query_agents(environment: str = "ALL") -> list[dict]:
     return rows
 
 
+def query_events(
+    environment: str = "ALL", agent_id: str = "ALL", log_source: str = "ALL",
+    time_range: str = "all", start: Optional[str] = None, end: Optional[str] = None,
+    limit: int = 50,
+) -> list[dict]:
+    """
+    Eventos crudos (no solo alertas) para poder "profundizar" en algo
+    que no cruzó ningún umbral de detección -- incluye raw_line y
+    metadata, que hoy no se exponen en ningún otro endpoint.
+    """
+    conn = get_connection()
+    env_clause, env_params = _environment_clause(environment)
+    agent_clause, agent_params = _agent_clause(agent_id)
+    source_clause, source_params = _log_source_clause(log_source)
+    time_clause, time_params = _time_range_clause(time_range, start, end)
+
+    rows = conn.execute(f"""
+        SELECT id, timestamp, hostname, agent_id, log_source, service,
+               event_type, username, source_ip, source_port, command,
+               metadata, raw_line, created_at
+        FROM events
+        WHERE 1=1 {env_clause} {agent_clause} {source_clause} {time_clause}
+        ORDER BY created_at DESC
+        LIMIT ?
+    """, env_params + agent_params + source_params + time_params + (limit,)).fetchall()
+
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 def query_alerts(
     severity: Optional[str] = None,
     status: Optional[str] = None,
@@ -377,9 +407,15 @@ def query_alerts(
     start: Optional[str] = None,
     end: Optional[str] = None,
     environment: str = "ALL",
+    hostname: Optional[str] = None,
     limit: int = 100
 ) -> list[dict]:
-    """Consulta alertas con filtro opcional por severidad, estado, antigüedad y workspace."""
+    """
+    Consulta alertas con filtro opcional por severidad, estado,
+    antigüedad, workspace y agente. `alerts` no tiene columna agent_id
+    (a diferencia de `events`) -- el filtro por agente se hace por
+    hostname, mismo criterio ya usado para el backfill de environment.
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -391,6 +427,9 @@ def query_alerts(
     if status:
         where_clauses.append("status = ?")
         params.append(status)
+    if hostname:
+        where_clauses.append("hostname = ?")
+        params.append(hostname)
 
     time_clause, time_params = _time_range_clause(time_range, start, end)
     if time_clause:
@@ -446,20 +485,22 @@ def update_alert_status(alert_id: str, status: str, note: Optional[str] = None) 
     return dict(row)
 
 
-def query_mitre_coverage(environment: str = "ALL") -> list[dict]:
+def query_mitre_coverage(environment: str = "ALL", hostname: Optional[str] = None) -> list[dict]:
     """
     Cuenta alertas por técnica MITRE. mitre_technique se guarda como
     "T1110 - Brute Force" — se separa en el primer " - " para quedarnos
     solo con el ID, que es lo que se compara contra MITRE_REFERENCE.
+    `alerts` no tiene agent_id -- el filtro por agente se hace por hostname.
     """
     conn = get_connection()
     env_clause, env_params = _environment_clause(environment)
+    host_clause, host_params = ("AND hostname = ?", (hostname,)) if hostname else ("", ())
     rows = conn.execute(f"""
         SELECT mitre_technique, COUNT(*) as n
         FROM alerts
-        WHERE mitre_technique IS NOT NULL AND mitre_technique != '' {env_clause}
+        WHERE mitre_technique IS NOT NULL AND mitre_technique != '' {env_clause} {host_clause}
         GROUP BY mitre_technique
-    """, env_params).fetchall()
+    """, env_params + host_params).fetchall()
     conn.close()
 
     counts: dict[str, int] = {}
@@ -498,7 +539,10 @@ def save_geo(source_ip: str, country: str, country_code: str, city: str, lat: fl
     conn.close()
 
 
-def get_attacker_geo(limit: int = 100, max_new_lookups: int = 20, environment: str = "ALL") -> list[dict]:
+def get_attacker_geo(
+    limit: int = 100, max_new_lookups: int = 20,
+    environment: str = "ALL", agent_id: str = "ALL",
+) -> list[dict]:
     """
     IPs públicas con actividad, geolocalizadas. Usa el cache primero;
     para las que falten, consulta ip-api.com (tope de `max_new_lookups`
@@ -509,14 +553,15 @@ def get_attacker_geo(limit: int = 100, max_new_lookups: int = 20, environment: s
     """
     conn = get_connection()
     env_clause, env_params = _environment_clause(environment)
+    agent_clause, agent_params = _agent_clause(agent_id)
     rows = conn.execute(f"""
         SELECT source_ip, COUNT(*) as attempts
         FROM events
-        WHERE source_ip IS NOT NULL {env_clause}
+        WHERE source_ip IS NOT NULL {env_clause} {agent_clause}
         GROUP BY source_ip
         ORDER BY attempts DESC
         LIMIT ?
-    """, env_params + (limit,)).fetchall()
+    """, env_params + agent_params + (limit,)).fetchall()
     conn.close()
 
     attempts_by_ip = {row["source_ip"]: row["attempts"] for row in rows}
@@ -630,6 +675,16 @@ def _environment_clause(environment: str, column: str = "environment") -> tuple[
     return f"AND {column} = ?", (environment,)
 
 
+def _agent_clause(agent_id: str, column: str = "agent_id") -> tuple[str, tuple]:
+    """
+    Clausula SQL parametrizada para filtrar por agente -- mismo shape
+    que _log_source_clause/_environment_clause. "ALL" no filtra nada.
+    """
+    if agent_id == "ALL":
+        return "", ()
+    return f"AND {column} = ?", (agent_id,)
+
+
 # Presets de rango de tiempo -> modificador de datetime('now', ?) de
 # SQLite. Filtra por created_at (cuándo SENTINEL insertó la fila) y no
 # por el timestamp del log -- ese es aleatorio/inconsistente entre
@@ -678,13 +733,14 @@ def _time_range_clause(
 def query_summary(
     log_source: str = "ALL", time_range: str = "all",
     start: Optional[str] = None, end: Optional[str] = None,
-    environment: str = "ALL",
+    environment: str = "ALL", agent_id: str = "ALL",
 ) -> dict:
-    """KPIs del dashboard (eventos, alertas, agentes), con filtro opcional por fuente, antigüedad y workspace."""
+    """KPIs del dashboard (eventos, alertas, agentes), con filtro opcional por fuente, antigüedad, workspace y agente."""
     conn = get_connection()
     source_clause, source_params = _log_source_clause(log_source)
     time_clause, time_params = _time_range_clause(time_range, start, end)
     env_clause, env_params = _environment_clause(environment)
+    agent_clause, agent_params = _agent_clause(agent_id)
 
     row = conn.execute(f"""
         SELECT
@@ -694,8 +750,8 @@ def query_summary(
                           event_type='invalid_user' THEN 1 ELSE 0 END) as failed_logins,
             SUM(CASE WHEN event_type='accepted_password' THEN 1 ELSE 0 END) as ok_logins,
             SUM(CASE WHEN event_type='sudo_command'      THEN 1 ELSE 0 END) as sudo_events
-        FROM events WHERE 1=1 {source_clause} {time_clause} {env_clause}
-    """, source_params + time_params + env_params).fetchone()
+        FROM events WHERE 1=1 {source_clause} {time_clause} {env_clause} {agent_clause}
+    """, source_params + time_params + env_params + agent_params).fetchone()
 
     alert_row = conn.execute(f"""
         SELECT COUNT(*) as total,
@@ -707,12 +763,13 @@ def query_summary(
     # Estado actual de los agentes -- no tiene sentido "filtrarlo por
     # antigüedad", un agente está activo o no en este momento.
     agent_env_clause, agent_env_params = _environment_clause(environment)
+    agent_id_clause, agent_id_params = _agent_clause(agent_id)
     agent_row = conn.execute(f"""
         SELECT COUNT(*) as total,
             SUM(CASE WHEN (strftime('%s','now') - strftime('%s', last_seen)) < {AGENT_OFFLINE_AFTER_SECONDS}
                 THEN 1 ELSE 0 END) as active
-        FROM agents WHERE 1=1 {agent_env_clause}
-    """, agent_env_params).fetchone()
+        FROM agents WHERE 1=1 {agent_env_clause} {agent_id_clause}
+    """, agent_env_params + agent_id_params).fetchone()
 
     conn.close()
     return {
@@ -732,13 +789,14 @@ def query_summary(
 def query_top_ips(
     log_source: str = "ALL", limit: int = 8, time_range: str = "all",
     start: Optional[str] = None, end: Optional[str] = None,
-    environment: str = "ALL",
+    environment: str = "ALL", agent_id: str = "ALL",
 ) -> list[dict]:
-    """Top IPs por intentos fallidos (ssh) o requests (web), con filtro opcional por fuente, antigüedad y workspace."""
+    """Top IPs por intentos fallidos (ssh) o requests (web), con filtro opcional por fuente, antigüedad, workspace y agente."""
     conn = get_connection()
     source_clause, source_params = _log_source_clause(log_source)
     time_clause, time_params = _time_range_clause(time_range, start, end)
     env_clause, env_params = _environment_clause(environment)
+    agent_clause, agent_params = _agent_clause(agent_id)
     event_types = "('http_request')" if log_source == "WEB" else "('failed_password','invalid_user')"
 
     rows = conn.execute(f"""
@@ -746,9 +804,9 @@ def query_top_ips(
                COUNT(DISTINCT username) as targeted_users
         FROM events
         WHERE event_type IN {event_types}
-          AND source_ip IS NOT NULL {source_clause} {time_clause} {env_clause}
+          AND source_ip IS NOT NULL {source_clause} {time_clause} {env_clause} {agent_clause}
         GROUP BY source_ip ORDER BY attempts DESC LIMIT ?
-    """, source_params + time_params + env_params + (limit,)).fetchall()
+    """, source_params + time_params + env_params + agent_params + (limit,)).fetchall()
 
     conn.close()
     return [dict(row) for row in rows]
@@ -757,19 +815,20 @@ def query_top_ips(
 def query_event_types(
     log_source: str = "ALL", time_range: str = "all",
     start: Optional[str] = None, end: Optional[str] = None,
-    environment: str = "ALL",
+    environment: str = "ALL", agent_id: str = "ALL",
 ) -> list[dict]:
-    """Distribución de eventos por tipo, con filtro opcional por fuente, antigüedad y workspace."""
+    """Distribución de eventos por tipo, con filtro opcional por fuente, antigüedad, workspace y agente."""
     conn = get_connection()
     source_clause, source_params = _log_source_clause(log_source)
     time_clause, time_params = _time_range_clause(time_range, start, end)
     env_clause, env_params = _environment_clause(environment)
+    agent_clause, agent_params = _agent_clause(agent_id)
 
     rows = conn.execute(f"""
         SELECT event_type, COUNT(*) as n FROM events
-        WHERE 1=1 {source_clause} {time_clause} {env_clause}
+        WHERE 1=1 {source_clause} {time_clause} {env_clause} {agent_clause}
         GROUP BY event_type
-    """, source_params + time_params + env_params).fetchall()
+    """, source_params + time_params + env_params + agent_params).fetchall()
 
     conn.close()
     return [dict(row) for row in rows]
@@ -778,21 +837,22 @@ def query_event_types(
 def query_timeline(
     log_source: str = "ALL", time_range: str = "all",
     start: Optional[str] = None, end: Optional[str] = None,
-    environment: str = "ALL",
+    environment: str = "ALL", agent_id: str = "ALL",
 ) -> list[dict]:
-    """Serie de tiempo de eventos por tipo, con filtro opcional por fuente, antigüedad y workspace."""
+    """Serie de tiempo de eventos por tipo, con filtro opcional por fuente, antigüedad, workspace y agente."""
     conn = get_connection()
     source_clause, source_params = _log_source_clause(log_source)
     time_clause, time_params = _time_range_clause(time_range, start, end)
     env_clause, env_params = _environment_clause(environment)
+    agent_clause, agent_params = _agent_clause(agent_id)
 
     rows = conn.execute(f"""
         SELECT substr(timestamp, 1, 8) as hour,
                event_type, COUNT(*) as n
-        FROM events WHERE 1=1 {source_clause} {time_clause} {env_clause}
+        FROM events WHERE 1=1 {source_clause} {time_clause} {env_clause} {agent_clause}
         GROUP BY hour, event_type
         ORDER BY hour
-    """, source_params + time_params + env_params).fetchall()
+    """, source_params + time_params + env_params + agent_params).fetchall()
 
     conn.close()
     return [dict(row) for row in rows]

@@ -22,6 +22,11 @@ services:
       - SENTINEL_SYSLOG_AGENT_ID=${SENTINEL_SYSLOG_AGENT_ID:-}
       - SENTINEL_SYSLOG_HOSTNAME=${SENTINEL_SYSLOG_HOSTNAME:-}
       - SENTINEL_SYSLOG_IP=${SENTINEL_SYSLOG_IP:-}
+      # JSON: IP de origen -> {agent_id, hostname, os} -- así cada
+      # cliente real de syslog (VM Linux, VM Windows, firewall, etc.)
+      # queda como su propio agente en vez de mezclarse todos bajo uno
+      # solo. Ver DEPLOYMENT.md.
+      - SENTINEL_SYSLOG_CLIENTS=${SENTINEL_SYSLOG_CLIENTS:-}
     restart: unless-stopped
 
   dashboard:

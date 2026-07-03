@@ -1,5 +1,9 @@
 import os
+import json
+import logging
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 REAL_AGENT_ID = "agent-real-vm"
@@ -106,6 +110,46 @@ def get_syslog_agent() -> Agent:
         ip_address=os.environ.get("SENTINEL_SYSLOG_IP", ""),
         os="SonicOS",
         log_sources=["sonicwall"],
+        environment="real_vm",
+    )
+
+
+def _load_syslog_clients() -> dict:
+    """
+    Parsea SENTINEL_SYSLOG_CLIENTS (JSON: IP -> {agent_id, hostname, os})
+    -- mapea clientes reales de syslog conocidos a una identidad legible,
+    en vez de agruparlos todos bajo un solo agente fijo. Si no está
+    configurada o el JSON es inválido, se devuelve vacío (no revienta
+    el receptor de syslog por un typo en .env).
+    """
+    raw = os.environ.get("SENTINEL_SYSLOG_CLIENTS")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("SENTINEL_SYSLOG_CLIENTS no es JSON válido -- se ignora")
+        return {}
+
+
+def resolve_syslog_agent(sender_ip: str, claimed_hostname: str | None = None) -> Agent:
+    """
+    Resuelve qué agente representa a quien mandó un paquete de syslog,
+    por su IP real (no por lo que el propio mensaje dice ser, que no es
+    confiable). Si sender_ip está en SENTINEL_SYSLOG_CLIENTS, usa esa
+    identidad configurada; si no, autogenera un agente por IP para no
+    perder el dato ni mezclarlo con otros -- solo queda con un nombre
+    menos amigable ("Unknown") hasta que se agregue a la configuración.
+    """
+    clients = _load_syslog_clients()
+    cfg = clients.get(sender_ip, {})
+
+    return Agent(
+        agent_id=cfg.get("agent_id") or f"agent-syslog-{sender_ip.replace('.', '-')}",
+        hostname=cfg.get("hostname") or claimed_hostname or sender_ip,
+        ip_address=sender_ip,
+        os=cfg.get("os") or "Unknown",
+        log_sources=["syslog"],
         environment="real_vm",
     )
 

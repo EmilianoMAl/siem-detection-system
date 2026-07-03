@@ -2,11 +2,11 @@ import asyncio
 import logging
 import re
 
-from engine.agents import get_syslog_agent
+from engine.agents import Agent, resolve_syslog_agent
 from engine.parsers import auth_parser, web_parser, sonicwall_parser, generic_syslog_parser
 from engine.pipeline import ingest_lines_multi
 from engine.detectors.rules import DetectionEngine
-from engine.storage import get_max_alert_counter, insert_events, insert_alerts, touch_agent
+from engine.storage import get_max_alert_counter, insert_events, insert_alerts, touch_agent, register_agents
 
 logger = logging.getLogger(__name__)
 
@@ -56,34 +56,53 @@ PARSER_CHAIN = [
 async def process_syslog_batch(packets: list[tuple[str, str]]) -> None:
     """
     Procesa un lote de paquetes de syslog ya recibidos: parsea (probando
-    varios formatos), corre el motor de detección, inserta. Separada de
-    la recepción UDP para poder probarla directo con una lista de
-    (línea, ip_emisor), sin sockets ni temporizadores de por medio.
+    varios formatos), resuelve a qué agente pertenece cada uno POR SU IP
+    REAL (un mismo lote puede traer líneas de más de un cliente a la vez
+    -- ej. la VM Linux y una VM de Windows), corre el motor de
+    detección, inserta. Separada de la recepción UDP para poder
+    probarla directo con una lista de (línea, ip_emisor), sin sockets ni
+    temporizadores de por medio.
 
-    ip_emisor es la IP real que mandó el paquete UDP -- se guarda en
-    event.metadata["sender_ip"], distinta del `source_ip` que algunos
-    parsers ya extraen del propio contenido del log (ej. la IP
-    atacante en una línea de SSH/SonicWall). Así se puede responder
-    "¿quién me mandó esto?" con un dato real en vez de confiar en el
-    hostname que el propio mensaje dice tener.
+    ip_emisor es la IP real que mandó el paquete UDP -- se usa para
+    resolver el agente (ver engine.agents.resolve_syslog_agent) y
+    también se guarda en event.metadata["sender_ip"], distinta del
+    `source_ip` que algunos parsers ya extraen del propio contenido del
+    log (ej. la IP atacante en una línea de SSH/SonicWall).
     """
     if not packets:
         return
 
-    agent = get_syslog_agent()
+    # Se resuelve un agente por cada IP distinta vista en el lote, la
+    # primera vez que aparece (no una por línea) -- usando el hostname
+    # que el propio evento ya parseado trae (ej. "wazuh-srv-Virtual-Machine"
+    # extraído por auth_parser/generic_syslog_parser), para que un
+    # agente autogenerado (IP sin configurar en SENTINEL_SYSLOG_CLIENTS)
+    # quede con un nombre legible en vez de solo la IP.
+    resolved_agents: dict[str, Agent] = {}
+
+    def _resolve(sender_ip, event):
+        agent = resolved_agents.get(sender_ip)
+        if agent is None:
+            agent = resolve_syslog_agent(sender_ip, claimed_hostname=event.hostname)
+            resolved_agents[sender_ip] = agent
+        return agent
+
     items = [(line, {"sender_ip": sender_ip}) for line, sender_ip in packets]
-    events, unparsed = ingest_lines_multi(agent, items, PARSER_CHAIN)
+    events, unparsed = ingest_lines_multi(_resolve, items, PARSER_CHAIN)
     if not events:
         if unparsed:
             logger.debug(f"{unparsed} línea(s) de syslog no reconocidas")
         return
+
+    register_agents(list(resolved_agents.values()))
 
     engine = DetectionEngine(start_counter=get_max_alert_counter())
     alerts = engine.run_all_rules(events)
 
     insert_events(events)
     insert_alerts(alerts)
-    touch_agent(agent.agent_id)
+    for agent in resolved_agents.values():
+        touch_agent(agent.agent_id)
 
 
 class SyslogProtocol(asyncio.DatagramProtocol):

@@ -272,3 +272,31 @@ def workspace_selector() -> str:
         key="workspace_label", label_visibility="collapsed",
     )
     return WORKSPACE_LABELS[label]
+
+
+def agent_selector(agents: list[dict]) -> tuple[str, str | None]:
+    """
+    Selector de agente compartido por las páginas del dashboard --
+    devuelve (agent_id, hostname): agent_id para filtrar events/summary/
+    top-ips/etc (tienen esa columna), hostname para filtrar alerts (esa
+    tabla no tiene agent_id, se filtra por hostname).
+
+    La lista de opciones depende del workspace elegido (puede cambiar
+    entre renders) -- si el agente que ya estaba seleccionado deja de
+    existir en las opciones nuevas, se resetea a "Todos" en vez de
+    dejar que Streamlit truene por un valor de key= que ya no matchea
+    ninguna opción.
+    """
+    options: dict[str, tuple[str, str | None]] = {"Todos": ("ALL", None)}
+    for a in agents:
+        options[f"{a['hostname']} ({a['agent_id']})"] = (a["agent_id"], a["hostname"])
+
+    if st.session_state.get("agent_filter_label") not in options:
+        st.session_state["agent_filter_label"] = "Todos"
+
+    st.markdown('<div class="section-label">Agente</div>', unsafe_allow_html=True)
+    label = st.selectbox(
+        "Agente", list(options.keys()),
+        key="agent_filter_label", label_visibility="collapsed",
+    )
+    return options[label]

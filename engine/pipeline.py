@@ -79,20 +79,25 @@ def ingest_lines(agent: Agent, log_source: str, lines: list[str]) -> tuple[list[
 
 
 def ingest_lines_multi(
-    agent: Agent, items: list[tuple[str, dict]],
+    resolve_agent: Callable[[Optional[str], LogEvent], Agent],
+    items: list[tuple[str, dict]],
     parsers: list[Callable[[str], Optional[LogEvent]]],
 ) -> tuple[list[LogEvent], int]:
     """
     Igual que ingest_lines, pero para un receptor que puede recibir más
-    de un formato en el mismo puerto (el receptor de syslog: puede
-    llegar auth.log real reenviado por rsyslog, un firewall SonicWall,
-    o cualquier otra cosa). Prueba cada parser en orden por línea y usa
-    el primero que matchee -- no hay un log_source fijo de antemano.
+    de un formato Y de más de un agente en el mismo lote (el receptor
+    de syslog: en una misma ventana de 15s puede llegar auth.log real
+    de una VM Linux, un firewall SonicWall, y una VM de Windows, cada
+    uno con su propia identidad). Prueba cada parser en orden por línea
+    y usa el primero que matchee; a cada evento resuelto se le asigna
+    su agente llamando a `resolve_agent(sender_ip, event)` -- no hay un
+    agente ni un log_source fijo de antemano para todo el lote.
 
-    Cada item es (línea, metadata_extra) -- metadata_extra (ej. la IP
-    real de quién mandó el paquete UDP, distinta del `source_ip` que
-    extrae el parser del contenido del log) se fusiona en el evento
-    resultante si algún parser matcheó esa línea.
+    Cada item es (línea, metadata_extra) -- metadata_extra debe traer
+    "sender_ip" (la IP real de quién mandó el paquete UDP, usada tanto
+    para resolver el agente como para guardarse en el evento, distinta
+    del `source_ip` que algún parser haya extraído del contenido del
+    log, ej. la IP atacante en una línea SSH/SonicWall).
     """
     events = []
     unparsed = 0
@@ -103,17 +108,22 @@ def ingest_lines_multi(
             event = parser(line)
             if event:
                 break
-        if event:
-            if extra_metadata:
-                event.metadata = {**(event.metadata or {}), **extra_metadata}
-            events.append(event)
-        else:
+        if not event:
             unparsed += 1
+            continue
 
-    _tag_events(agent, events)
+        sender_ip = (extra_metadata or {}).get("sender_ip")
+        agent = resolve_agent(sender_ip, event)
+        event.agent_id = agent.agent_id
+        event.environment = agent.environment
+        if not event.hostname:
+            event.hostname = agent.hostname
+        if extra_metadata:
+            event.metadata = {**(event.metadata or {}), **extra_metadata}
+        events.append(event)
 
     logger.info(
-        f"Ingesta (líneas, multi-formato) de {agent.hostname}: "
+        f"Ingesta (líneas, multi-formato/multi-agente): "
         f"{len(events)} eventos, {unparsed} sin parsear"
     )
     return events, unparsed

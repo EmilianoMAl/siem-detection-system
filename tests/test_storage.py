@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from engine import storage
@@ -575,3 +577,85 @@ def test_migration_backfills_environment_for_known_real_agents():
     assert storage.query_summary(environment="real_vm")["total_events"] == 1
     agents = storage.query_agents(environment="real_vm")
     assert [a["agent_id"] for a in agents] == [REAL_AGENT_ID]
+
+
+def test_agent_clause_all_has_no_filter():
+    clause, params = storage._agent_clause("ALL")
+
+    assert clause == ""
+    assert params == ()
+
+
+def test_agent_clause_filters_by_value():
+    clause, params = storage._agent_clause("agent-001")
+
+    assert clause == "AND agent_id = ?"
+    assert params == ("agent-001",)
+
+
+def test_query_summary_filters_by_agent_id():
+    storage.insert_events([
+        make_event(agent_id="agent-001", source_ip="1.1.1.1"),
+        make_event(agent_id="agent-002", source_ip="2.2.2.2"),
+    ])
+
+    assert storage.query_summary(agent_id="agent-001")["total_events"] == 1
+    assert storage.query_summary(agent_id="ALL")["total_events"] == 2
+
+
+def test_query_top_ips_filters_by_agent_id():
+    storage.insert_events([
+        make_event(agent_id="agent-001", source_ip="1.1.1.1"),
+        make_event(agent_id="agent-002", source_ip="2.2.2.2"),
+    ])
+
+    ips = {row["source_ip"] for row in storage.query_top_ips(agent_id="agent-002")}
+    assert ips == {"2.2.2.2"}
+
+
+def test_query_alerts_filters_by_hostname():
+    storage.insert_alerts([
+        make_alert("ALERT-0001", hostname="host-a"),
+        make_alert("ALERT-0002", hostname="host-b"),
+    ])
+
+    alerts = storage.query_alerts(hostname="host-b")
+    assert [a["alert_id"] for a in alerts] == ["ALERT-0002"]
+
+
+def test_query_events_returns_raw_line_and_metadata():
+    storage.insert_events([make_event(raw_line="raw-line-content", metadata={"foo": "bar"})])
+
+    events = storage.query_events()
+
+    assert len(events) == 1
+    assert events[0]["raw_line"] == "raw-line-content"
+    assert json.loads(events[0]["metadata"]) == {"foo": "bar"}
+
+
+def test_query_events_filters_by_agent_id():
+    storage.insert_events([
+        make_event(agent_id="agent-001", event_type="failed_password"),
+        make_event(agent_id="agent-002", event_type="sudo_command"),
+    ])
+
+    events = storage.query_events(agent_id="agent-002")
+    assert [e["event_type"] for e in events] == ["sudo_command"]
+
+
+def test_query_events_filters_by_environment_and_log_source():
+    storage.insert_events([
+        make_event(environment="real_vm", log_source="syslog", event_type="syslog_message"),
+        make_event(environment="simulated", log_source="ssh", event_type="failed_password"),
+    ])
+
+    events = storage.query_events(environment="real_vm", log_source="syslog")
+    assert len(events) == 1
+    assert events[0]["event_type"] == "syslog_message"
+
+
+def test_query_events_respects_limit_and_orders_newest_first():
+    storage.insert_events([make_event() for _ in range(5)])
+
+    events = storage.query_events(limit=2)
+    assert len(events) == 2

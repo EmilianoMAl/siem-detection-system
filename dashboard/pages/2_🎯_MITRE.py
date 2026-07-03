@@ -9,7 +9,7 @@ import streamlit as st
 import requests
 
 import api_client
-from theme import inject_theme, sidebar_brand, workspace_selector
+from theme import inject_theme, sidebar_brand, workspace_selector, agent_selector
 
 st.set_page_config(
     page_title="SENTINEL — MITRE ATT&CK",
@@ -31,6 +31,9 @@ except requests.exceptions.RequestException:
 with st.sidebar:
     sidebar_brand()
     environment = workspace_selector()
+    st.markdown("---")
+    st.markdown('<div class="section-label">Filters</div>', unsafe_allow_html=True)
+    _agent_id, agent_hostname = agent_selector(api_client.get_agents(environment))
     st.markdown("---")
     st.markdown('<div class="section-label">Navigation</div>', unsafe_allow_html=True)
     st.markdown(
@@ -56,7 +59,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.markdown("---")
 
-techniques = api_client.get_mitre_coverage(environment)
+techniques = api_client.get_mitre_coverage(environment, agent_hostname)
 
 detected = [t for t in techniques if t["count"] > 0]
 total_hits = sum(t["count"] for t in techniques)

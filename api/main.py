@@ -17,7 +17,7 @@ from engine.pipeline import ingest_lines, LINE_PARSERS
 from engine.syslog_listener import start_syslog_listener
 from engine.storage import (
     query_summary, query_alerts, query_agents,
-    query_top_ips, query_event_types, query_timeline,
+    query_top_ips, query_event_types, query_timeline, query_events,
     query_generic, GENERIC_QUERY_DIMENSIONS, query_mitre_coverage,
     save_dashboard, update_dashboard, list_dashboards,
     get_dashboard, delete_dashboard,
@@ -25,7 +25,7 @@ from engine.storage import (
     update_alert_status, get_attacker_geo,
 )
 from api.schemas import (
-    SummaryResponse, AlertResponse, AgentResponse,
+    SummaryResponse, AlertResponse, AgentResponse, EventResponse,
     TopIpResponse, EventTypeResponse, TimelinePointResponse, HealthResponse,
     QueryPointResponse, DashboardSummary, DashboardDetail, DashboardSaveRequest,
     IngestRequest, IngestResponse, AlertStatusUpdate, MitreTechniqueResponse,
@@ -108,9 +108,9 @@ def health() -> dict:
 def get_summary(
     log_source: LogSource = "ALL", time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
-    environment: Environment = "ALL",
+    environment: Environment = "ALL", agent_id: str = "ALL",
 ) -> dict:
-    return query_summary(log_source, time_range, start, end, environment)
+    return query_summary(log_source, time_range, start, end, environment, agent_id)
 
 
 AlertStatus = Literal["OPEN", "ACKNOWLEDGED", "CLOSED"]
@@ -120,11 +120,11 @@ AlertStatus = Literal["OPEN", "ACKNOWLEDGED", "CLOSED"]
 def get_alerts(
     status: AlertStatus | None = None, time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
-    environment: Environment = "ALL",
+    environment: Environment = "ALL", hostname: str | None = None,
 ) -> list[dict]:
     return query_alerts(
         status=status, time_range=time_range, start=start, end=end,
-        environment=environment, limit=500,
+        environment=environment, hostname=hostname, limit=500,
     )
 
 
@@ -145,27 +145,43 @@ def get_agents(environment: Environment = "ALL") -> list[dict]:
 def get_top_ips(
     log_source: LogSource = "ALL", time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
-    environment: Environment = "ALL",
+    environment: Environment = "ALL", agent_id: str = "ALL",
 ) -> list[dict]:
-    return query_top_ips(log_source, time_range=time_range, start=start, end=end, environment=environment)
+    return query_top_ips(
+        log_source, time_range=time_range, start=start, end=end,
+        environment=environment, agent_id=agent_id,
+    )
 
 
 @router.get("/event-types", response_model=list[EventTypeResponse])
 def get_event_types(
     log_source: LogSource = "ALL", time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
-    environment: Environment = "ALL",
+    environment: Environment = "ALL", agent_id: str = "ALL",
 ) -> list[dict]:
-    return query_event_types(log_source, time_range, start, end, environment)
+    return query_event_types(log_source, time_range, start, end, environment, agent_id)
 
 
 @router.get("/timeline", response_model=list[TimelinePointResponse])
 def get_timeline(
     log_source: LogSource = "ALL", time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
-    environment: Environment = "ALL",
+    environment: Environment = "ALL", agent_id: str = "ALL",
 ) -> list[dict]:
-    return query_timeline(log_source, time_range, start, end, environment)
+    return query_timeline(log_source, time_range, start, end, environment, agent_id)
+
+
+@router.get("/events", response_model=list[EventResponse])
+def get_events(
+    environment: Environment = "ALL", agent_id: str = "ALL",
+    log_source: LogSource = "ALL", time_range: TimeRange = "all",
+    start: str | None = None, end: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    return query_events(
+        environment=environment, agent_id=agent_id, log_source=log_source,
+        time_range=time_range, start=start, end=end, limit=limit,
+    )
 
 
 @router.get("/query-dimensions")
@@ -175,8 +191,8 @@ def get_query_dimensions() -> dict:
 
 
 @router.get("/mitre-coverage", response_model=list[MitreTechniqueResponse])
-def get_mitre_coverage(environment: Environment = "ALL") -> list[dict]:
-    counts = {row["technique_id"]: row["count"] for row in query_mitre_coverage(environment)}
+def get_mitre_coverage(environment: Environment = "ALL", hostname: str | None = None) -> list[dict]:
+    counts = {row["technique_id"]: row["count"] for row in query_mitre_coverage(environment, hostname)}
     return [
         {
             "tactic": tactic,
@@ -189,8 +205,8 @@ def get_mitre_coverage(environment: Environment = "ALL") -> list[dict]:
 
 
 @router.get("/geo-attackers", response_model=list[GeoAttackerResponse])
-def get_geo_attackers(environment: Environment = "ALL") -> list[dict]:
-    return get_attacker_geo(environment=environment)
+def get_geo_attackers(environment: Environment = "ALL", agent_id: str = "ALL") -> list[dict]:
+    return get_attacker_geo(environment=environment, agent_id=agent_id)
 
 
 @router.get("/query", response_model=list[QueryPointResponse])

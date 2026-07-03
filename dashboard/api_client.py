@@ -24,9 +24,12 @@ def get_health() -> dict:
 def get_summary(
     log_source: str = "ALL", time_range: str = "all",
     start: str | None = None, end: str | None = None,
-    environment: str = "ALL",
+    environment: str = "ALL", agent_id: str = "ALL",
 ) -> dict:
-    params = {"log_source": log_source, "time_range": time_range, "environment": environment}
+    params = {
+        "log_source": log_source, "time_range": time_range,
+        "environment": environment, "agent_id": agent_id,
+    }
     if start:
         params["start"] = start
     if end:
@@ -37,7 +40,7 @@ def get_summary(
 def get_alerts(
     status: str | None = None, time_range: str = "all",
     start: str | None = None, end: str | None = None,
-    environment: str = "ALL",
+    environment: str = "ALL", hostname: str | None = None,
 ) -> list[dict]:
     params = {"time_range": time_range, "environment": environment}
     if status:
@@ -46,6 +49,8 @@ def get_alerts(
         params["start"] = start
     if end:
         params["end"] = end
+    if hostname:
+        params["hostname"] = hostname
     return _get("/alerts", params)
 
 
@@ -60,9 +65,12 @@ def get_agents(environment: str = "ALL") -> list[dict]:
 def get_top_ips(
     log_source: str = "ALL", time_range: str = "all",
     start: str | None = None, end: str | None = None,
-    environment: str = "ALL",
+    environment: str = "ALL", agent_id: str = "ALL",
 ) -> list[dict]:
-    params = {"log_source": log_source, "time_range": time_range, "environment": environment}
+    params = {
+        "log_source": log_source, "time_range": time_range,
+        "environment": environment, "agent_id": agent_id,
+    }
     if start:
         params["start"] = start
     if end:
@@ -73,9 +81,12 @@ def get_top_ips(
 def get_event_types(
     log_source: str = "ALL", time_range: str = "all",
     start: str | None = None, end: str | None = None,
-    environment: str = "ALL",
+    environment: str = "ALL", agent_id: str = "ALL",
 ) -> list[dict]:
-    params = {"log_source": log_source, "time_range": time_range, "environment": environment}
+    params = {
+        "log_source": log_source, "time_range": time_range,
+        "environment": environment, "agent_id": agent_id,
+    }
     if start:
         params["start"] = start
     if end:
@@ -86,9 +97,12 @@ def get_event_types(
 def get_timeline(
     log_source: str = "ALL", time_range: str = "all",
     start: str | None = None, end: str | None = None,
-    environment: str = "ALL",
+    environment: str = "ALL", agent_id: str = "ALL",
 ) -> list[dict]:
-    params = {"log_source": log_source, "time_range": time_range, "environment": environment}
+    params = {
+        "log_source": log_source, "time_range": time_range,
+        "environment": environment, "agent_id": agent_id,
+    }
     if start:
         params["start"] = start
     if end:
@@ -96,9 +110,28 @@ def get_timeline(
     return _get("/timeline", params)
 
 
-def get_mitre_coverage(environment: str = "ALL") -> list[dict]:
-    return _get("/mitre-coverage", {"environment": environment})
+def get_events(
+    environment: str = "ALL", agent_id: str = "ALL", log_source: str = "ALL",
+    time_range: str = "all", start: str | None = None, end: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    params = {
+        "environment": environment, "agent_id": agent_id, "log_source": log_source,
+        "time_range": time_range, "limit": limit,
+    }
+    if start:
+        params["start"] = start
+    if end:
+        params["end"] = end
+    return _get("/events", params)
 
 
-def get_geo_attackers(environment: str = "ALL") -> list[dict]:
-    return _get("/geo-attackers", {"environment": environment})
+def get_mitre_coverage(environment: str = "ALL", hostname: str | None = None) -> list[dict]:
+    params = {"environment": environment}
+    if hostname:
+        params["hostname"] = hostname
+    return _get("/mitre-coverage", params)
+
+
+def get_geo_attackers(environment: str = "ALL", agent_id: str = "ALL") -> list[dict]:
+    return _get("/geo-attackers", {"environment": environment, "agent_id": agent_id})

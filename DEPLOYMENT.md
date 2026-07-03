@@ -317,20 +317,41 @@ tengas — pero ten en cuenta que mientras tanto cualquiera en internet
 podría mandarte syslog falso (se descarta solo si no matchea el
 formato de SonicWall, no hay autenticación posible en el protocolo).
 
-**12.2 — Configura la identidad del emisor** en `.env` (opcional — si
-no se configura, se usan los defaults `agent-syslog-fw`/`sonicwall-fw`):
+**12.2 — Identifica a cada cliente por su IP** en `.env`, con
+`SENTINEL_SYSLOG_CLIENTS` (JSON: IP de origen → identidad del agente).
+Cada dispositivo que mande syslog a este puerto (una VM Linux, una VM
+de Windows, un firewall real, etc.) queda como su propio agente
+separado en vez de mezclarse todos bajo uno solo:
 ```bash
-# En .env:
-SENTINEL_SYSLOG_AGENT_ID=agent-syslog-fw
-SENTINEL_SYSLOG_HOSTNAME=sonicwall-fw
-SENTINEL_SYSLOG_IP=<ip-del-firewall-en-tu-trabajo>
+# En .env (una sola línea, sin espacios extra):
+SENTINEL_SYSLOG_CLIENTS={"200.66.80.91":{"agent_id":"agent-linux-wazuh","hostname":"wazuh-srv-Virtual-Machine","os":"Ubuntu Linux"},"<IP_WINDOWS>":{"agent_id":"agent-windows-01","hostname":"WIN-DESKTOP","os":"Windows"}}
 ```
 Aplica con `docker compose up -d` (recrea `api` con las nuevas
 variables y publica el puerto 514/udp definido en `docker-compose.yml`).
+Si una IP manda tráfico sin estar en esta lista, igual se guarda —
+SENTINEL le autogenera un agente (`agent-syslog-<ip-con-guiones>`, sin
+nombre amigable) para no perder el dato — solo agrégala aquí cuando
+tengas la IP real para que se vea con un nombre legible.
+
+> Nota: las variables `SENTINEL_SYSLOG_AGENT_ID`/`SENTINEL_SYSLOG_HOSTNAME`/
+> `SENTINEL_SYSLOG_IP` (de una versión anterior de esta guía) ya no las usa
+> el receptor de syslog — la identificación ahora es por IP real de
+> quien manda el paquete, no un agente fijo para todo. Se dejan sin
+> quitar solo por compatibilidad con datos ya guardados bajo
+> `agent-syslog-fw`.
 
 **12.3 — Configura el SonicWall (o lo que mande los logs)** para
 enviar syslog a `<ip-publica-de-esta-VM>:514` sobre UDP — esto se hace
-del lado del firewall/dispositivo, no en esta VM.
+del lado del firewall/dispositivo, no en esta VM. Para una VM Linux con
+`rsyslog`, en esa otra VM:
+```bash
+sudo tee /etc/rsyslog.d/60-sentinel.conf > /dev/null <<EOF
+*.* @<ip-publica-de-esta-VM>:514
+EOF
+sudo systemctl restart rsyslog
+```
+(el `@` simple es UDP; `*.*` manda todo lo que ese sistema logea —
+se puede acotar a `auth,authpriv.*` para solo intentos de login).
 
 **12.4 — Verifica que esté llegando**:
 ```bash
@@ -338,7 +359,9 @@ docker compose logs -f api | grep -i syslog
 ```
 Las líneas se agrupan y procesan cada 15 segundos (igual que el agente
 real agrupa por lotes) — en el dashboard, cambia el selector "Workspace"
-a "VM real" para ver solo estos datos, separados de la simulación.
+a "VM real" y usa el selector "Agente" para ver los datos de cada
+cliente por separado. La página "Events" muestra el detalle completo
+de cada evento (no solo los que dispararon una alerta).
 
 ---
 
