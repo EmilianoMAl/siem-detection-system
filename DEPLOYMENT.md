@@ -363,6 +363,19 @@ a "VM real" y usa el selector "Agente" para ver los datos de cada
 cliente por separado. La página "Events" muestra el detalle completo
 de cada evento (no solo los que dispararon una alerta).
 
+**12.5 — Puerto extra (5514/UDP)**. El receptor de syslog también
+escucha en el puerto 5514 por default (útil para separar una fuente
+nueva sin tocar la que ya funciona en el 514, o para pruebas) — ambos
+comparten el mismo procesamiento, no hace falta configurar nada nuevo
+en `.env` a menos que quieras agregar más puertos todavía
+(`SENTINEL_SYSLOG_EXTRA_PORTS`, CSV, ej. `5514,5515`). Falta abrirlo en
+el firewall igual que el 514:
+```bash
+sudo ufw allow from <CIDR_RED_TRABAJO> to any port 5514 proto udp
+```
+Y en la **OCI Security List**, la misma regla de ingreso que el 514
+pero con puerto 5514. Verifica igual que en 12.4.
+
 ---
 
 ## Troubleshooting

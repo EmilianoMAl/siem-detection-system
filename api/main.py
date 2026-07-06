@@ -50,6 +50,12 @@ INGEST_TOKEN = os.environ.get("SENTINEL_INGEST_TOKEN", "")
 MAX_INGEST_LINES = 500
 SIMULATION_TICK_SECONDS = int(os.environ.get("SENTINEL_SIMULATION_TICK_SECONDS", 300))
 SYSLOG_PORT = int(os.environ.get("SENTINEL_SYSLOG_PORT", 8514))
+# Puertos UDP adicionales para el mismo receptor de syslog (ej. separar
+# una fuente nueva sin tocar la que ya funciona en SYSLOG_PORT) -- CSV,
+# ej. "5514,5515".
+SYSLOG_EXTRA_PORTS = [
+    int(p) for p in os.environ.get("SENTINEL_SYSLOG_EXTRA_PORTS", "").split(",") if p.strip()
+]
 
 
 async def _simulation_loop():
@@ -73,11 +79,14 @@ async def lifespan(app: FastAPI):
     bootstrap_data()
 
     task = asyncio.create_task(_simulation_loop())
-    syslog_transport, syslog_flush_task = await start_syslog_listener(SYSLOG_PORT)
+    syslog_transports, syslog_flush_task = await start_syslog_listener(
+        [SYSLOG_PORT] + SYSLOG_EXTRA_PORTS
+    )
     yield
     task.cancel()
     syslog_flush_task.cancel()
-    syslog_transport.close()
+    for transport in syslog_transports:
+        transport.close()
 
 
 app = FastAPI(

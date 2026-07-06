@@ -10,6 +10,12 @@ services:
       # puede pasar por Nginx/Basic Auth. El acceso se restringe en el
       # firewall (ufw/OCI Security List), ver DEPLOYMENT.md.
       - "514:8514/udp"
+      # Puerto extra opcional para el mismo receptor de syslog (ej.
+      # separar una fuente nueva sin tocar la que ya funciona en el
+      # 514) -- controlado por SENTINEL_SYSLOG_EXTRA_PORTS. Este ya es
+      # >1024 así que host y contenedor usan el mismo número, sin el
+      # remapeo que sí hace falta para el 514 (privilegiado).
+      - "5514:5514/udp"
     volumes:
       - ./data:/app/data
     environment:
@@ -19,6 +25,7 @@ services:
       - SENTINEL_REAL_AGENT_OS=${SENTINEL_REAL_AGENT_OS:-}
       - SENTINEL_SIMULATION_TICK_SECONDS=${SENTINEL_SIMULATION_TICK_SECONDS:-300}
       - SENTINEL_SYSLOG_PORT=${SENTINEL_SYSLOG_PORT:-8514}
+      - SENTINEL_SYSLOG_EXTRA_PORTS=${SENTINEL_SYSLOG_EXTRA_PORTS:-5514}
       - SENTINEL_SYSLOG_AGENT_ID=${SENTINEL_SYSLOG_AGENT_ID:-}
       - SENTINEL_SYSLOG_HOSTNAME=${SENTINEL_SYSLOG_HOSTNAME:-}
       - SENTINEL_SYSLOG_IP=${SENTINEL_SYSLOG_IP:-}

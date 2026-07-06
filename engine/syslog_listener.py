@@ -129,17 +129,27 @@ async def _flush_loop(buffer: list[tuple[str, str]]) -> None:
             logger.exception("Error procesando lote de syslog — se reintenta en el siguiente ciclo")
 
 
-async def start_syslog_listener(port: int) -> tuple:
+async def start_syslog_listener(ports: list[int]) -> tuple:
     """
-    Arranca el receptor de syslog en UDP :port más su tarea de flush
-    periódico. Retorna (transport, flush_task) para que el caller
-    (lifespan de la API) los pueda cerrar/cancelar al apagar.
+    Arranca el receptor de syslog en UDP en cada uno de los puertos
+    dados (ej. el principal más alguno extra para separar otra fuente o
+    hacer pruebas sin tocar el que ya funciona) más su tarea de flush
+    periódico. Todos los puertos comparten el mismo buffer -- el lote
+    que se procesa cada SYSLOG_FLUSH_SECONDS mezcla lo que haya llegado
+    por cualquiera de ellos, la resolución de agente por sender_ip ya
+    se encarga de no mezclar los datos entre clientes distintos.
+
+    Retorna (transports, flush_task) para que el caller (lifespan de la
+    API) los pueda cerrar/cancelar al apagar.
     """
     buffer: list[tuple[str, str]] = []
     loop = asyncio.get_running_loop()
-    transport, _ = await loop.create_datagram_endpoint(
-        lambda: SyslogProtocol(buffer), local_addr=("0.0.0.0", port)
-    )
+    transports = []
+    for port in ports:
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: SyslogProtocol(buffer), local_addr=("0.0.0.0", port)
+        )
+        transports.append(transport)
     flush_task = asyncio.create_task(_flush_loop(buffer))
-    logger.info(f"Receptor de syslog escuchando en UDP :{port} (lote cada {SYSLOG_FLUSH_SECONDS}s)")
-    return transport, flush_task
+    logger.info(f"Receptor de syslog escuchando en UDP :{ports} (lote cada {SYSLOG_FLUSH_SECONDS}s)")
+    return transports, flush_task
