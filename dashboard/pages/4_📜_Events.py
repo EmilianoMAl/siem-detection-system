@@ -89,7 +89,7 @@ else:
                 <span style='color:#F1F0EE;font-size:0.85rem;font-weight:600'>
                     {event['event_type']}
                 </span>
-                <span class='muted-text' style='margin-left:auto'>{event['timestamp'] or event['created_at']}</span>
+                <span class='muted-text' style='margin-left:auto'>{event['created_at']} UTC</span>
             </div>
             <div style='display:flex;gap:8px;flex-wrap:wrap'>
                 {source_html} {agent_html} {ip_html}
@@ -104,8 +104,8 @@ else:
                 metadata = {}
 
             detail_lines = [
-                f"timestamp: {event['timestamp']}",
-                f"created_at: {event['created_at']}",
+                f"created_at (UTC, cuando SENTINEL lo recibió): {event['created_at']}",
+                f"timestamp (el que trae el log, hora local del origen -- puede no traer año/zona): {event['timestamp']}",
                 f"hostname: {event['hostname']}",
                 f"agent_id: {event['agent_id']}",
                 f"log_source: {event['log_source']}",
