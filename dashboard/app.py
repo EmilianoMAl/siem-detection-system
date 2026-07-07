@@ -88,12 +88,12 @@ except requests.exceptions.RequestException:
 
 
 # ── DATA LAYER — el dashboard es un cliente puro de la API, no toca SQLite ──
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=10)
 def load_summary(source: str, time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL", agent_id: str = "ALL"):
     return api_client.get_summary(source, time_range, start, end, environment, agent_id)
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=10)
 def load_alerts(time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL", hostname: str | None = None):
     alerts = api_client.get_alerts(time_range=time_range, start=start, end=end, environment=environment, hostname=hostname)
     for a in alerts:
@@ -110,7 +110,7 @@ def act_on_alert(alert_id: str, status: str):
     load_alerts.clear()
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=10)
 def load_top_ips(source: str, time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL", agent_id: str = "ALL"):
     rows = api_client.get_top_ips(source, time_range, start, end, environment, agent_id)
     return pd.DataFrame(
@@ -119,13 +119,13 @@ def load_top_ips(source: str, time_range: str, start: str | None = None, end: st
     )
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=10)
 def load_event_types(source: str, time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL", agent_id: str = "ALL"):
     rows = api_client.get_event_types(source, time_range, start, end, environment, agent_id)
     return pd.DataFrame([(r["event_type"], r["n"]) for r in rows], columns=["Tipo", "Count"])
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=10)
 def load_timeline(source: str, time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL", agent_id: str = "ALL"):
     rows = api_client.get_timeline(source, time_range, start, end, environment, agent_id)
     return pd.DataFrame(
@@ -137,6 +137,13 @@ def load_timeline(source: str, time_range: str, start: str | None = None, end: s
 # ── SIDEBAR ──
 with st.sidebar:
     sidebar_brand()
+
+    if st.button("🔄 Refrescar ahora", use_container_width=True):
+        load_summary.clear()
+        load_alerts.clear()
+        load_top_ips.clear()
+        load_event_types.clear()
+        load_timeline.clear()
 
     environment = workspace_selector()
 
