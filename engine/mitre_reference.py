@@ -33,6 +33,7 @@ MITRE_REFERENCE = [
     ("Persistence", "T1098", "Account Manipulation"),
     ("Persistence", "T1543", "Create or Modify System Process"),
     ("Persistence", "T1136", "Create Account"),
+    ("Persistence", "T1554", "Compromise Client Software Binary"),
 
     # Privilege Escalation
     ("Privilege Escalation", "T1548", "Abuse Elevation Control Mechanism"),

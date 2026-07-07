@@ -163,6 +163,34 @@ def test_fim_critical_change_ignores_benign_path():
     assert engine.detect_fim_critical_change([event]) == []
 
 
+def test_fim_critical_change_triggers_on_usr_bin_with_compromise_binary_technique():
+    event = make_event(
+        log_source="fim", event_type="fim_created", username=None,
+        command=None, source_ip=None,
+        metadata={"file_path": "/usr/bin/evil", "action": "created"},
+    )
+    engine = DetectionEngine()
+
+    alerts = engine.detect_fim_critical_change([event])
+
+    assert len(alerts) == 1
+    assert alerts[0].severity == "CRITICAL"
+    assert alerts[0].mitre_technique == "T1554 - Compromise Client Software Binary"
+
+
+def test_fim_critical_change_authorized_keys_still_uses_account_manipulation_technique():
+    event = make_event(
+        log_source="fim", event_type="fim_modified", username="root",
+        command=None, source_ip=None,
+        metadata={"file_path": "/root/.ssh/authorized_keys", "action": "modified"},
+    )
+    engine = DetectionEngine()
+
+    alerts = engine.detect_fim_critical_change([event])
+
+    assert alerts[0].mitre_technique == "T1098 - Account Manipulation"
+
+
 def test_run_all_rules_combines_every_source():
     events = [
         make_event(event_type="failed_password"),

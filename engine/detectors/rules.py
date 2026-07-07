@@ -320,6 +320,7 @@ class DetectionEngine:
         (integridad de archivos / FIM).
 
         MITRE ATT&CK: T1098 - Account Manipulation (authorized_keys) /
+                       T1554 - Compromise Client Software Binary (binarios del sistema) /
                        T1565.001 - Stored Data Manipulation (otros)
         """
         critical_paths = self.config["fim_critical_change"]["critical_paths"]
@@ -331,10 +332,12 @@ class DetectionEngine:
             file_path = event.metadata.get("file_path", "")
 
             if any(fnmatch.fnmatch(file_path, pattern) for pattern in critical_paths):
-                technique = (
-                    "T1098 - Account Manipulation" if "authorized_keys" in file_path
-                    else "T1565.001 - Stored Data Manipulation"
-                )
+                if "authorized_keys" in file_path:
+                    technique = "T1098 - Account Manipulation"
+                elif any(fnmatch.fnmatch(file_path, p) for p in ("/usr/bin/*", "/bin/*", "/usr/sbin/*", "/sbin/*")):
+                    technique = "T1554 - Compromise Client Software Binary"
+                else:
+                    technique = "T1565.001 - Stored Data Manipulation"
                 alert = Alert(
                     alert_id=self._new_alert_id(),
                     rule_name="FIM_CRITICAL_FILE_CHANGE",

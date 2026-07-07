@@ -35,6 +35,7 @@ DEFAULT_RULES_CONFIG: dict[str, Any] = {
         "critical_paths": [
             "/etc/passwd", "/etc/shadow", "/etc/ssh/sshd_config",
             "/root/.ssh/authorized_keys", "/home/*/.ssh/authorized_keys",
+            "/usr/bin/*",
         ],
     },
     "sonicwall_denials": {

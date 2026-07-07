@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from engine.agents import Agent
-from engine.parsers import auth_parser, web_parser, fim_parser, sonicwall_parser, generic_syslog_parser
+from engine.parsers import auth_parser, web_parser, fim_parser, sonicwall_parser, wazuh_syslog_parser, generic_syslog_parser
 from engine.parsers.auth_parser import LogEvent
 
 logger = logging.getLogger(__name__)
@@ -13,6 +13,7 @@ PARSERS = {
     "web": web_parser.parse_log_file,
     "fim": fim_parser.parse_log_file,
     "sonicwall": sonicwall_parser.parse_log_file,
+    "wazuh": wazuh_syslog_parser.parse_log_file,
     "syslog": generic_syslog_parser.parse_log_file,
 }
 
@@ -21,6 +22,7 @@ LINE_PARSERS = {
     "web": web_parser.parse_line,
     "fim": fim_parser.parse_line,
     "sonicwall": sonicwall_parser.parse_line,
+    "wazuh": wazuh_syslog_parser.parse_line,
     "syslog": generic_syslog_parser.parse_line,
 }
 

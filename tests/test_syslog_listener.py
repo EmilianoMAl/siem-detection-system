@@ -175,3 +175,28 @@ def test_process_syslog_batch_uses_configured_client_name(monkeypatch):
     by_id = {a["agent_id"]: a for a in agents}
     assert "agent-linux-wazuh" in by_id
     assert by_id["agent-linux-wazuh"]["hostname"] == "wazuh-srv"
+
+
+def test_process_syslog_batch_wazuh_fim_alert_triggers_critical_alert():
+    # Extremo a extremo: una alerta de syscheck de Wazuh sobre /usr/bin
+    # llega por syslog, se parsea como evento FIM y dispara
+    # FIM_CRITICAL_FILE_CHANGE -- sin ninguna regla de detección nueva.
+    syscheck_alert = {
+        "timestamp": "2026-07-08T10:00:00.000-0600",
+        "rule": {"level": 7, "description": "File added to the system.", "id": "550", "groups": ["ossec", "syscheck"]},
+        "agent": {"id": "001", "name": "wazuh-srv-Virtual-Machine"},
+        "syscheck": {"path": "/usr/bin/evil", "event": "added", "md5_before": None, "md5_after": "abc123"},
+        "full_log": "File '/usr/bin/evil' added",
+    }
+    line = f"<38>Jul  8 10:00:00 wazuh-srv-Virtual-Machine ossec: {json.dumps(syscheck_alert)}"
+
+    asyncio.run(process_syslog_batch(_pkts([line])))
+
+    events = storage.query_event_types(environment="real_vm")
+    assert {e["event_type"] for e in events} == {"fim_created"}
+
+    alerts = storage.query_alerts(environment="real_vm")
+    assert len(alerts) == 1
+    assert alerts[0]["rule_name"] == "FIM_CRITICAL_FILE_CHANGE"
+    assert alerts[0]["severity"] == "CRITICAL"
+    assert alerts[0]["mitre_technique"] == "T1554 - Compromise Client Software Binary"

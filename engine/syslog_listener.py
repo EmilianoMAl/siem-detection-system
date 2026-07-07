@@ -3,7 +3,7 @@ import logging
 import re
 
 from engine.agents import Agent, resolve_syslog_agent
-from engine.parsers import auth_parser, web_parser, sonicwall_parser, generic_syslog_parser
+from engine.parsers import auth_parser, web_parser, sonicwall_parser, wazuh_syslog_parser, generic_syslog_parser
 from engine.pipeline import ingest_lines_multi
 from engine.detectors.rules import DetectionEngine
 from engine.storage import get_max_alert_counter, insert_events, insert_alerts, touch_agent, register_agents
@@ -46,6 +46,7 @@ def _specific(parser):
 
 
 PARSER_CHAIN = [
+    _specific(wazuh_syslog_parser.parse_line),  # tag "ossec:" inconfundible, va primero
     _specific(auth_parser.parse_line),
     _specific(web_parser.parse_line),
     _specific(sonicwall_parser.parse_line),
