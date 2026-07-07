@@ -1,4 +1,28 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import streamlit as st
+
+# Todas las fechas que guarda SENTINEL (created_at, last_seen) son UTC
+# naive ("YYYY-MM-DD HH:MM:SS", de datetime('now') de SQLite). Se
+# muestran siempre convertidas a la zona horaria de Ciudad de México
+# (fija en UTC-6 desde que México eliminó el horario de verano en la
+# zona centro) para que todo el dashboard use un solo huso -- antes
+# cada pantalla mostraba una fecha distinta (una en UTC sin etiquetar,
+# otra en la hora nativa del log, que varía por fuente) y eso se veía
+# como fechas/horas inconsistentes o "del futuro".
+LOCAL_TZ = ZoneInfo("America/Mexico_City")
+
+
+def to_local(utc_str: str | None, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """Convierte un string UTC naive ("YYYY-MM-DD HH:MM:SS") a hora CDMX."""
+    if not utc_str:
+        return "—"
+    try:
+        dt = datetime.strptime(utc_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=ZoneInfo("UTC"))
+    except ValueError:
+        return utc_str
+    return dt.astimezone(LOCAL_TZ).strftime(fmt)
 
 # Tema visual compartido por todas las páginas del dashboard
 # (Home, Agents, ...). "Quiet Console" — antracita cálido + acento zafiro,

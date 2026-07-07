@@ -6,7 +6,7 @@ import requests
 from datetime import datetime, timedelta, timezone, time as dtime
 
 import api_client
-from theme import inject_theme, sidebar_brand, workspace_selector, agent_selector, PLOTLY, EVENT_COLORS, SEVERITY_CLASS
+from theme import inject_theme, sidebar_brand, workspace_selector, agent_selector, LOCAL_TZ, PLOTLY, EVENT_COLORS, SEVERITY_CLASS
 
 RULE_SOURCE = {
     "SSH_BRUTE_FORCE": "ssh",
@@ -166,7 +166,7 @@ with st.sidebar:
 
     start_str = end_str = None
     if time_range == "custom":
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(LOCAL_TZ).date()
         date_range = st.date_input(
             "Rango de fechas", value=(today - timedelta(days=7), today),
         )
@@ -184,9 +184,11 @@ with st.sidebar:
         with col_to:
             time_to = st.time_input("Hasta", value=dtime(23, 59))
 
-        start_str = datetime.combine(range_start, time_from).strftime("%Y-%m-%d %H:%M:%S")
-        end_str = datetime.combine(range_end, time_to).strftime("%Y-%m-%d %H:%M:%S")
-        st.caption("Horario en UTC — mismo huso que usa la base de datos.")
+        # El usuario elige en hora CDMX -- se convierte a UTC antes de
+        # comparar contra created_at (que siempre está en UTC en la BD).
+        start_str = datetime.combine(range_start, time_from, tzinfo=LOCAL_TZ).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        end_str = datetime.combine(range_end, time_to, tzinfo=LOCAL_TZ).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        st.caption("Horario CDMX (se convierte a UTC internamente para filtrar).")
 
     show_closed = st.checkbox("Show closed alerts", value=False)
 
@@ -250,7 +252,7 @@ st.markdown(f"""
             <span class='status-dot'></span>
             <span style='color:#F1F0EE;font-size:0.72rem;font-weight:600'>Live</span>
         </div>
-        <div class='muted-text' style='margin-top:2px'>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+        <div class='muted-text' style='margin-top:2px'>{datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')} CDMX</div>
     </div>
 </div>
 """, unsafe_allow_html=True)

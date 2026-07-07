@@ -12,7 +12,7 @@ import pandas as pd
 import requests
 
 import api_client
-from theme import inject_theme, sidebar_brand, workspace_selector, agent_selector
+from theme import inject_theme, sidebar_brand, workspace_selector, agent_selector, to_local
 
 st.set_page_config(
     page_title="SENTINEL — Agents",
@@ -95,7 +95,7 @@ else:
             </div>
             <div class='muted-text' style='margin-bottom:8px'>
                 IP: {agent['ip_address']} &nbsp;·&nbsp; OS: {agent['os']} &nbsp;·&nbsp;
-                Last seen: {agent['last_seen'] or 'never'}
+                Last seen: {to_local(agent['last_seen']) if agent['last_seen'] else 'never'} CDMX
             </div>
             <div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px'>
                 {sources_html}
@@ -118,6 +118,6 @@ if agents:
         "Status": a["status"],
         "Events": a["event_count"],
         "Alerts": a["alert_count"],
-        "Last Seen": a["last_seen"],
+        "Last Seen (CDMX)": to_local(a["last_seen"]) if a["last_seen"] else "never",
     } for a in agents])
     st.dataframe(df, use_container_width=True, hide_index=True)
