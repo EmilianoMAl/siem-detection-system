@@ -258,7 +258,7 @@ def test_query_mitre_coverage_groups_by_technique_id():
 
     coverage = storage.query_mitre_coverage()
 
-    assert coverage == [{"technique_id": "T1110", "count": 2}]
+    assert coverage == [{"technique_id": "T1110", "technique_name": "T1110", "count": 2}]
 
 
 def test_query_mitre_coverage_ignores_missing_technique():
@@ -555,7 +555,7 @@ def test_query_mitre_coverage_filters_by_environment():
     ])
 
     result = storage.query_mitre_coverage(environment="real_vm")
-    assert result == [{"technique_id": "T1110", "count": 1}]
+    assert result == [{"technique_id": "T1110", "technique_name": "Brute Force", "count": 1}]
 
 
 def test_migration_backfills_environment_for_known_real_agents():
@@ -659,3 +659,36 @@ def test_query_events_respects_limit_and_orders_newest_first():
 
     events = storage.query_events(limit=2)
     assert len(events) == 2
+
+
+def test_query_events_query_param_filters_by_field():
+    storage.insert_events([
+        make_event(source_ip="203.0.113.9", event_type="failed_password"),
+        make_event(source_ip="8.8.8.8", event_type="accepted_password"),
+    ])
+
+    events = storage.query_events(query="ip:203.0.113.9")
+    assert len(events) == 1
+    assert events[0]["event_type"] == "failed_password"
+
+
+def test_query_events_query_param_free_text_searches_raw_line():
+    storage.insert_events([
+        make_event(raw_line="Failed password for root from 1.2.3.4"),
+        make_event(raw_line="Accepted publickey for deploy from 5.6.7.8"),
+    ])
+
+    events = storage.query_events(query="publickey")
+    assert len(events) == 1
+    assert "publickey" in events[0]["raw_line"]
+
+
+def test_query_alerts_query_param_filters_by_rule_name():
+    storage.insert_alerts([
+        make_alert("ALERT-0001", rule_name="SSH_BRUTE_FORCE"),
+        make_alert("ALERT-0002", rule_name="WEB_ATTACK_PAYLOAD"),
+    ])
+
+    alerts = storage.query_alerts(query="rule:WEB_ATTACK_PAYLOAD")
+    assert len(alerts) == 1
+    assert alerts[0]["alert_id"] == "ALERT-0002"

@@ -130,10 +130,11 @@ def get_alerts(
     status: AlertStatus | None = None, time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
     environment: Environment = "ALL", hostname: str | None = None,
+    query: str | None = None,
 ) -> list[dict]:
     return query_alerts(
         status=status, time_range=time_range, start=start, end=end,
-        environment=environment, hostname=hostname, limit=500,
+        environment=environment, hostname=hostname, limit=500, query=query,
     )
 
 
@@ -185,11 +186,11 @@ def get_events(
     environment: Environment = "ALL", agent_id: str = "ALL",
     log_source: LogSource = "ALL", time_range: TimeRange = "all",
     start: str | None = None, end: str | None = None,
-    limit: int = 50,
+    limit: int = 50, query: str | None = None,
 ) -> list[dict]:
     return query_events(
         environment=environment, agent_id=agent_id, log_source=log_source,
-        time_range=time_range, start=start, end=end, limit=limit,
+        time_range=time_range, start=start, end=end, limit=limit, query=query,
     )
 
 
@@ -201,8 +202,12 @@ def get_query_dimensions() -> dict:
 
 @router.get("/mitre-coverage", response_model=list[MitreTechniqueResponse])
 def get_mitre_coverage(environment: Environment = "ALL", hostname: str | None = None) -> list[dict]:
-    counts = {row["technique_id"]: row["count"] for row in query_mitre_coverage(environment, hostname)}
-    return [
+    rows = query_mitre_coverage(environment, hostname)
+    counts = {row["technique_id"]: row["count"] for row in rows}
+    names = {row["technique_id"]: row["technique_name"] for row in rows}
+    curated_ids = {technique_id for _, technique_id, _ in MITRE_REFERENCE}
+
+    coverage = [
         {
             "tactic": tactic,
             "technique_id": technique_id,
@@ -211,6 +216,19 @@ def get_mitre_coverage(environment: Environment = "ALL", hostname: str | None = 
         }
         for tactic, technique_id, technique_name in MITRE_REFERENCE
     ]
+    # Wazuh puede tagear cualquier técnica del framework completo (no
+    # solo el subconjunto curado en MITRE_REFERENCE) -- cualquiera que
+    # aparezca de verdad en una alerta pero no esté curada se agrega
+    # igual, en vez de quedar invisible en el tablero.
+    for technique_id, count in counts.items():
+        if technique_id not in curated_ids:
+            coverage.append({
+                "tactic": "Other",
+                "technique_id": technique_id,
+                "technique_name": names.get(technique_id, technique_id),
+                "count": count,
+            })
+    return coverage
 
 
 @router.get("/geo-attackers", response_model=list[GeoAttackerResponse])

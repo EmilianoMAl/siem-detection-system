@@ -47,6 +47,7 @@ MITRE_REFERENCE = [
 
     # Credential Access
     ("Credential Access", "T1110", "Brute Force"),
+    ("Credential Access", "T1110.003", "Password Spraying"),
     ("Credential Access", "T1552", "Unsecured Credentials"),
     ("Credential Access", "T1003", "OS Credential Dumping"),
 

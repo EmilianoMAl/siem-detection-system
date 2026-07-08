@@ -41,6 +41,7 @@ def get_alerts(
     status: str | None = None, time_range: str = "all",
     start: str | None = None, end: str | None = None,
     environment: str = "ALL", hostname: str | None = None,
+    query: str | None = None,
 ) -> list[dict]:
     params = {"time_range": time_range, "environment": environment}
     if status:
@@ -51,6 +52,8 @@ def get_alerts(
         params["end"] = end
     if hostname:
         params["hostname"] = hostname
+    if query:
+        params["query"] = query
     return _get("/alerts", params)
 
 
@@ -113,7 +116,7 @@ def get_timeline(
 def get_events(
     environment: str = "ALL", agent_id: str = "ALL", log_source: str = "ALL",
     time_range: str = "all", start: str | None = None, end: str | None = None,
-    limit: int = 50,
+    limit: int = 50, query: str | None = None,
 ) -> list[dict]:
     params = {
         "environment": environment, "agent_id": agent_id, "log_source": log_source,
@@ -123,6 +126,8 @@ def get_events(
         params["start"] = start
     if end:
         params["end"] = end
+    if query:
+        params["query"] = query
     return _get("/events", params)
 
 

@@ -94,8 +94,8 @@ def load_summary(source: str, time_range: str, start: str | None = None, end: st
 
 
 @st.cache_data(ttl=10)
-def load_alerts(time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL", hostname: str | None = None):
-    alerts = api_client.get_alerts(time_range=time_range, start=start, end=end, environment=environment, hostname=hostname)
+def load_alerts(time_range: str, start: str | None = None, end: str | None = None, environment: str = "ALL", hostname: str | None = None, query: str | None = None):
+    alerts = api_client.get_alerts(time_range=time_range, start=start, end=end, environment=environment, hostname=hostname, query=query)
     for a in alerts:
         a["source"] = RULE_SOURCE.get(a["rule_name"], "ssh")
     return alerts
@@ -274,7 +274,12 @@ col_alerts, col_ips = st.columns([3, 2])
 
 with col_alerts:
     st.markdown('<div class="section-label">Active threat feed</div>', unsafe_allow_html=True)
-    alerts = load_alerts(time_range, start_str, end_str, environment, agent_hostname)
+    alert_query = st.text_input(
+        "Buscar alertas",
+        placeholder='ip:203.0.113.9  ·  rule:SSH_BRUTE_FORCE AND severity:CRITICAL  ·  NOT status:CLOSED',
+        label_visibility="collapsed",
+    )
+    alerts = load_alerts(time_range, start_str, end_str, environment, agent_hostname, alert_query)
     filtered = alerts
     if not show_closed:
         filtered = [a for a in filtered if a.get("status", "OPEN") != "CLOSED"]

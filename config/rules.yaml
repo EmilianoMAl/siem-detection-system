@@ -48,3 +48,19 @@ fim_critical_change:
 sonicwall_denials:
   fail_threshold: 5          # rechazos desde 1 IP para disparar la alerta
   critical_threshold: 20     # a partir de aquí la severidad sube a CRITICAL
+
+password_spraying:
+  distinct_users_threshold: 5   # usuarios DISTINTOS fallidos desde 1 IP -- a diferencia
+                                 # de ssh_brute_force (mismo usuario, muchos intentos)
+
+account_creation:
+  patterns:
+    - "useradd"
+    - "adduser"
+    - "usermod -ag sudo"
+    - "usermod -ag wheel"
+    - "usermod -ag admin"
+
+wazuh_promoted_alert:
+  high_level: 8       # nivel de Wazuh a partir del cual se promueve a alerta HIGH
+  critical_level: 12  # y a partir de aquí, CRITICAL (semántica oficial de niveles de Wazuh)

@@ -246,3 +246,98 @@ def test_sonicwall_repeated_denials_below_threshold_does_not_trigger():
     engine = DetectionEngine()
 
     assert engine.detect_sonicwall_repeated_denials(events) == []
+
+
+def test_password_spraying_triggers_on_many_distinct_usernames():
+    events = [
+        make_event(event_type="failed_password", username=f"user{i}", source_ip="1.2.3.4")
+        for i in range(5)
+    ]
+    engine = DetectionEngine()
+
+    alerts = engine.detect_password_spraying(events)
+
+    assert len(alerts) == 1
+    assert alerts[0].rule_name == "PASSWORD_SPRAYING"
+    assert alerts[0].mitre_technique == "T1110.003 - Password Spraying"
+
+
+def test_password_spraying_ignores_same_username_repeated():
+    events = [make_event(event_type="failed_password", username="root") for _ in range(10)]
+    engine = DetectionEngine()
+
+    assert engine.detect_password_spraying(events) == []
+
+
+def test_account_creation_via_sudo_triggers():
+    event = make_event(
+        event_type="sudo_command", username="deploy",
+        command="useradd -m backdoor",
+    )
+    engine = DetectionEngine()
+
+    alerts = engine.detect_account_creation(events=[event])
+
+    assert len(alerts) == 1
+    assert alerts[0].rule_name == "ACCOUNT_CREATION_VIA_SUDO"
+    assert alerts[0].mitre_technique == "T1136 - Create Account"
+
+
+def test_account_creation_ignores_benign_sudo_command():
+    event = make_event(
+        event_type="sudo_command", username="deploy",
+        command="/usr/bin/apt update",
+    )
+    engine = DetectionEngine()
+
+    assert engine.detect_account_creation(events=[event]) == []
+
+
+def test_wazuh_promoted_alert_ignores_events_without_mitre_mapping():
+    # Ruido rutinario (ej. dpkg) -- Wazuh no lo tagea con mitre, no debe
+    # generar una alerta de SENTINEL, solo queda como evento.
+    event = make_event(
+        log_source="wazuh", event_type="wazuh_alert", username=None,
+        command=None, source_ip=None, hostname="wazuh-srv-Virtual-Machine",
+        metadata={"rule_id": "2904", "rule_level": 7, "rule_description": "Dpkg installed", "mitre": None},
+    )
+    engine = DetectionEngine()
+
+    assert engine.detect_wazuh_promoted_alert([event]) == []
+
+
+def test_wazuh_promoted_alert_triggers_on_windows_service_alert():
+    event = make_event(
+        log_source="wazuh", event_type="wazuh_alert", username=None,
+        command=None, source_ip=None, hostname="DESKTOP-GULVC64",
+        metadata={
+            "rule_id": "61138", "rule_level": 5,
+            "rule_description": "New Windows Service Created",
+            "mitre": {"id": ["T1543.003"], "tactic": ["Persistence"], "technique": ["Windows Service"]},
+        },
+    )
+    engine = DetectionEngine()
+
+    alerts = engine.detect_wazuh_promoted_alert([event])
+
+    assert len(alerts) == 1
+    assert alerts[0].rule_name == "WAZUH_MITRE_ALERT"
+    assert alerts[0].severity == "MEDIUM"  # nivel 5, debajo de high_level (8)
+    assert alerts[0].mitre_technique == "T1543.003 - Windows Service"
+
+
+def test_wazuh_promoted_alert_severity_scales_with_level():
+    event = make_event(
+        log_source="wazuh", event_type="wazuh_alert", username=None,
+        command=None, source_ip=None, hostname="wazuh-srv-Virtual-Machine",
+        metadata={
+            "rule_id": "5710", "rule_level": 12,
+            "rule_description": "Multiple authentication failures",
+            "mitre": {"id": ["T1110"], "tactic": ["Credential Access"], "technique": ["Brute Force"]},
+        },
+    )
+    engine = DetectionEngine()
+
+    alerts = engine.detect_wazuh_promoted_alert([event])
+
+    assert alerts[0].severity == "CRITICAL"

@@ -7,6 +7,39 @@ from engine.parsers.auth_parser import LogEvent
 from engine.detectors.rules import Alert
 from engine.agents import Agent, REAL_AGENT_IDS
 from engine.geoip import is_private_ip, lookup_ip
+from engine.query_dsl import parse_query
+
+# Alias de campo (en minúsculas) -> columna real, para la barra de
+# búsqueda tipo Lucene/KQL simplificada de la página Events (ver
+# engine/query_dsl.py). Un alias no listado aquí no rompe la búsqueda,
+# cae a buscar el token completo como texto libre en raw_line.
+EVENTS_QUERY_FIELDS = {
+    "ip": "source_ip", "source_ip": "source_ip",
+    "user": "username", "username": "username",
+    "host": "hostname", "hostname": "hostname",
+    "agent": "agent_id", "agent_id": "agent_id",
+    "source": "log_source", "log_source": "log_source",
+    "type": "event_type", "event_type": "event_type",
+    "port": "source_port", "source_port": "source_port",
+    "command": "command", "cmd": "command",
+    "service": "service",
+    "raw": "raw_line",
+}
+EVENTS_QUERY_NUMERIC_FIELDS = {"source_port"}
+
+# Mismo esquema para la página Home / Active Threat Feed, sobre `alerts`
+# -- columnas distintas a `events` (sin log_source/command, con
+# severity/status/rule_name/mitre_technique/description).
+ALERTS_QUERY_FIELDS = {
+    "ip": "source_ip", "source_ip": "source_ip",
+    "user": "username", "username": "username",
+    "host": "hostname", "hostname": "hostname",
+    "severity": "severity",
+    "status": "status",
+    "rule": "rule_name", "rule_name": "rule_name",
+    "technique": "mitre_technique", "mitre": "mitre_technique", "mitre_technique": "mitre_technique",
+    "description": "description", "desc": "description",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -373,28 +406,32 @@ def query_agents(environment: str = "ALL") -> list[dict]:
 def query_events(
     environment: str = "ALL", agent_id: str = "ALL", log_source: str = "ALL",
     time_range: str = "all", start: Optional[str] = None, end: Optional[str] = None,
-    limit: int = 50,
+    limit: int = 50, query: Optional[str] = None,
 ) -> list[dict]:
     """
     Eventos crudos (no solo alertas) para poder "profundizar" en algo
     que no cruzó ningún umbral de detección -- incluye raw_line y
     metadata, que hoy no se exponen en ningún otro endpoint.
+
+    `query` es una búsqueda tipo Lucene/KQL simplificada ("campo:valor",
+    texto libre, AND/OR/NOT) -- ver engine/query_dsl.py.
     """
     conn = get_connection()
     env_clause, env_params = _environment_clause(environment)
     agent_clause, agent_params = _agent_clause(agent_id)
     source_clause, source_params = _log_source_clause(log_source)
     time_clause, time_params = _time_range_clause(time_range, start, end)
+    query_clause, query_params = parse_query(query, EVENTS_QUERY_FIELDS, "raw_line", EVENTS_QUERY_NUMERIC_FIELDS)
 
     rows = conn.execute(f"""
         SELECT id, timestamp, hostname, agent_id, log_source, service,
                event_type, username, source_ip, source_port, command,
                metadata, raw_line, created_at
         FROM events
-        WHERE 1=1 {env_clause} {agent_clause} {source_clause} {time_clause}
+        WHERE 1=1 {env_clause} {agent_clause} {source_clause} {time_clause} {query_clause}
         ORDER BY created_at DESC
         LIMIT ?
-    """, env_params + agent_params + source_params + time_params + (limit,)).fetchall()
+    """, env_params + agent_params + source_params + time_params + query_params + (limit,)).fetchall()
 
     conn.close()
     return [dict(row) for row in rows]
@@ -408,13 +445,17 @@ def query_alerts(
     end: Optional[str] = None,
     environment: str = "ALL",
     hostname: Optional[str] = None,
-    limit: int = 100
+    limit: int = 100,
+    query: Optional[str] = None,
 ) -> list[dict]:
     """
     Consulta alertas con filtro opcional por severidad, estado,
     antigüedad, workspace y agente. `alerts` no tiene columna agent_id
     (a diferencia de `events`) -- el filtro por agente se hace por
     hostname, mismo criterio ya usado para el backfill de environment.
+
+    `query` es la misma búsqueda tipo Lucene/KQL simplificada de
+    query_events (ver engine/query_dsl.py), sobre las columnas de alerts.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -440,6 +481,11 @@ def query_alerts(
     if env_clause:
         where_clauses.append(env_clause.replace("AND ", "", 1))
         params.extend(env_params)
+
+    query_clause, query_params = parse_query(query, ALERTS_QUERY_FIELDS, "description")
+    if query_clause:
+        where_clauses.append(query_clause.replace("AND ", "", 1))
+        params.extend(query_params)
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -504,11 +550,13 @@ def query_mitre_coverage(environment: str = "ALL", hostname: Optional[str] = Non
     conn.close()
 
     counts: dict[str, int] = {}
+    names: dict[str, str] = {}
     for row in rows:
-        technique_id = row["mitre_technique"].split(" - ", 1)[0]
+        technique_id, _, technique_name = row["mitre_technique"].partition(" - ")
         counts[technique_id] = counts.get(technique_id, 0) + row["n"]
+        names.setdefault(technique_id, technique_name or technique_id)
 
-    return [{"technique_id": tid, "count": n} for tid, n in counts.items()]
+    return [{"technique_id": tid, "technique_name": names[tid], "count": n} for tid, n in counts.items()]
 
 
 def get_cached_geo(ips: list[str]) -> dict[str, dict]:

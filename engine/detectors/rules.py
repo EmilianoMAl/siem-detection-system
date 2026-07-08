@@ -218,6 +218,98 @@ class DetectionEngine:
 
         return alerts
 
+    def detect_password_spraying(self, events: list[LogEvent]) -> list[Alert]:
+        """
+        Regla: Detecta password spraying -- misma IP probando MUCHOS
+        usuarios DISTINTOS (pocos intentos cada uno), a diferencia de
+        SSH_BRUTE_FORCE (mismo usuario, muchos intentos). Es la firma
+        típica que usan CrowdStrike/SentinelOne para diferenciar
+        spraying de brute force clásico.
+
+        MITRE ATT&CK: T1110.003 - Password Spraying
+        """
+        cfg = self.config["password_spraying"]
+        alerts = []
+        failed_by_ip = defaultdict(list)
+
+        for event in events:
+            if event.log_source != "ssh":
+                continue
+            if event.event_type in ("failed_password", "invalid_user") and event.source_ip:
+                failed_by_ip[event.source_ip].append(event)
+
+        for ip, failed_events in failed_by_ip.items():
+            usernames = {e.username for e in failed_events if e.username}
+            if len(usernames) >= cfg["distinct_users_threshold"]:
+                alert = Alert(
+                    alert_id=self._new_alert_id(),
+                    rule_name="PASSWORD_SPRAYING",
+                    severity="HIGH",
+                    description=(
+                        f"Password spraying detectado desde {ip}: "
+                        f"{len(usernames)} usuarios distintos probados "
+                        f"({len(failed_events)} intentos totales)."
+                    ),
+                    source_ip=ip,
+                    username=None,
+                    hostname=failed_events[0].hostname,
+                    evidence=[e.raw_line for e in failed_events[:5]],
+                    recommendation=(
+                        f"Bloquear IP {ip} en firewall. "
+                        f"Revisar si alguno de los {len(usernames)} usuarios objetivo tuvo un login exitoso."
+                    ),
+                    mitre_technique="T1110.003 - Password Spraying",
+                    environment=failed_events[0].environment,
+                )
+                alerts.append(alert)
+                logger.warning(f"🚨 [HIGH] PASSWORD_SPRAYING | ip={ip} | usuarios={len(usernames)}")
+
+        return alerts
+
+    def detect_account_creation(self, events: list[LogEvent]) -> list[Alert]:
+        """
+        Regla: Detecta creación de cuentas/escalada a grupos privilegiados
+        vía sudo (useradd/adduser/usermod -aG sudo|wheel|admin) -- un
+        atacante con acceso sudo suele crear una cuenta propia para
+        mantener persistencia en vez de seguir usando la comprometida.
+
+        MITRE ATT&CK: T1136 - Create Account
+        """
+        patterns = self.config["account_creation"]["patterns"]
+        alerts = []
+
+        for event in events:
+            if event.log_source != "ssh" or event.event_type != "sudo_command":
+                continue
+            if not event.command:
+                continue
+
+            matched = [p for p in patterns if p.lower() in event.command.lower()]
+            if matched:
+                alert = Alert(
+                    alert_id=self._new_alert_id(),
+                    rule_name="ACCOUNT_CREATION_VIA_SUDO",
+                    severity="HIGH",
+                    description=(
+                        f"Posible creación/escalada de cuenta por {event.username}. "
+                        f"Comando: {event.command[:100]}"
+                    ),
+                    source_ip=event.source_ip,
+                    username=event.username,
+                    hostname=event.hostname,
+                    evidence=[event.raw_line],
+                    recommendation=(
+                        f"Verificar con {event.username} si esta cuenta nueva es autorizada. "
+                        f"Revisar /etc/passwd y /etc/group por cuentas no reconocidas."
+                    ),
+                    mitre_technique="T1136 - Create Account",
+                    environment=event.environment,
+                )
+                alerts.append(alert)
+                logger.warning(f"🚨 [HIGH] ACCOUNT_CREATION_VIA_SUDO | user={event.username}")
+
+        return alerts
+
     # ------------------------------------------------------------------
     # WEB
     # ------------------------------------------------------------------
@@ -416,6 +508,81 @@ class DetectionEngine:
         return alerts
 
     # ------------------------------------------------------------------
+    # WAZUH (genérico -- incluye endpoints Windows enrolados)
+    # ------------------------------------------------------------------
+
+    def detect_wazuh_promoted_alert(self, events: list[LogEvent]) -> list[Alert]:
+        """
+        Regla: Promueve alertas de Wazuh (log_source="wazuh") a alertas de
+        SENTINEL cuando son de verdad relevantes. Wazuh solo etiqueta con
+        rule.mitre las reglas que sí mapean a una técnica de ATT&CK real
+        (no lo hace, por ejemplo, en el ruido rutinario de dpkg/paquetes)
+        -- se usa esa presencia como filtro de relevancia, y el nivel de
+        Wazuh (rule.level) para decidir la severidad. Como Wazuh puede
+        tagear cualquier técnica del framework (no solo el subconjunto
+        curado en engine/mitre_reference.py), el tablero MITRE agrega
+        cualquier técnica no curada bajo la táctica "Other" en vez de
+        dejarla invisible (ver api/main.py::get_mitre_coverage).
+
+        Cubre tanto al manager de Wazuh como a cualquier agente remoto
+        que tenga enrolado (ej. un endpoint Windows) -- ambos llegan con
+        log_source="wazuh", la separación por agente ya la resuelve
+        engine/agents.py::resolve_wazuh_agent antes de llegar aquí.
+
+        MITRE ATT&CK: el que traiga la propia alerta de Wazuh.
+        """
+        cfg = self.config["wazuh_promoted_alert"]
+        alerts = []
+
+        for event in events:
+            if event.log_source != "wazuh":
+                continue
+
+            mitre = event.metadata.get("mitre")
+            if not mitre or not mitre.get("id"):
+                continue
+
+            level = event.metadata.get("rule_level") or 0
+            if level >= cfg["critical_level"]:
+                severity = "CRITICAL"
+            elif level >= cfg["high_level"]:
+                severity = "HIGH"
+            else:
+                severity = "MEDIUM"
+
+            technique_id = mitre["id"][0]
+            technique_names = mitre.get("technique") or []
+            technique_name = technique_names[0] if technique_names else technique_id
+            tactics = mitre.get("tactic") or []
+
+            description = event.metadata.get("rule_description") or event.metadata.get("full_log") or "Alerta de Wazuh"
+
+            alert = Alert(
+                alert_id=self._new_alert_id(),
+                rule_name="WAZUH_MITRE_ALERT",
+                severity=severity,
+                description=(
+                    f"[Wazuh nivel {level}] {description} "
+                    f"(agente: {event.hostname}, táctica: {', '.join(tactics) or 'N/D'})"
+                ),
+                source_ip=None,
+                username=None,
+                hostname=event.hostname,
+                evidence=[event.raw_line],
+                recommendation=(
+                    f"Revisar el detalle completo de la alerta en el manager de Wazuh "
+                    f"(rule.id={event.metadata.get('rule_id')}) y confirmar si {event.hostname} "
+                    f"tuvo actividad autorizada relacionada."
+                ),
+                mitre_technique=f"{technique_id} - {technique_name}",
+                environment=event.environment,
+            )
+            alerts.append(alert)
+            logger.warning(f"🚨 [{severity}] WAZUH_MITRE_ALERT | host={event.hostname} | technique={technique_id}")
+
+        return alerts
+
+    # ------------------------------------------------------------------
 
     def run_all_rules(self, events: list[LogEvent]) -> list[Alert]:
         """
@@ -427,12 +594,15 @@ class DetectionEngine:
 
         all_alerts = []
         all_alerts.extend(self.detect_brute_force(events))
+        all_alerts.extend(self.detect_password_spraying(events))
         all_alerts.extend(self.detect_suspicious_commands(events))
+        all_alerts.extend(self.detect_account_creation(events))
         all_alerts.extend(self.detect_successful_login_after_failures(events))
         all_alerts.extend(self.detect_web_attacks(events))
         all_alerts.extend(self.detect_recon_scan(events))
         all_alerts.extend(self.detect_fim_critical_change(events))
         all_alerts.extend(self.detect_sonicwall_repeated_denials(events))
+        all_alerts.extend(self.detect_wazuh_promoted_alert(events))
 
         severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
         all_alerts.sort(key=lambda a: severity_order.get(a.severity, 4))

@@ -65,7 +65,20 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.markdown("---")
 
-events = api_client.get_events(environment=environment, agent_id=agent_id, log_source=log_source, limit=50)
+search_query = st.text_input(
+    "Buscar",
+    placeholder='ip:203.0.113.9 AND user:root  ·  "login denied"  ·  NOT type:sudo_command',
+    label_visibility="collapsed",
+)
+st.caption(
+    "Campos: ip, user, host, agent, source (log_source), type (event_type), "
+    "port, command, service, raw. Combina con AND/OR/NOT. Sin `campo:` busca texto libre."
+)
+
+events = api_client.get_events(
+    environment=environment, agent_id=agent_id, log_source=log_source,
+    limit=50, query=search_query,
+)
 
 k1, k2, k3 = st.columns(3)
 with k1: st.metric("Events shown", len(events))

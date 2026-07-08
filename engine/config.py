@@ -42,6 +42,18 @@ DEFAULT_RULES_CONFIG: dict[str, Any] = {
         "fail_threshold": 5,
         "critical_threshold": 20,
     },
+    "password_spraying": {
+        "distinct_users_threshold": 5,
+    },
+    "account_creation": {
+        "patterns": [
+            "useradd", "adduser", "usermod -ag sudo", "usermod -ag wheel", "usermod -ag admin",
+        ],
+    },
+    "wazuh_promoted_alert": {
+        "high_level": 8,
+        "critical_level": 12,
+    },
 }
 
 
