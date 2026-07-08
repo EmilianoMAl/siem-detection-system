@@ -38,6 +38,7 @@ def _pkts(lines: list[str], sender_ip: str = TEST_SENDER_IP) -> list[tuple[str, 
 def isolated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "DB_PATH", tmp_path / "test_siem.db")
     monkeypatch.delenv("SENTINEL_SYSLOG_CLIENTS", raising=False)
+    monkeypatch.delenv("SENTINEL_WAZUH_AGENTS", raising=False)
     storage.initialize_db()
     yield
 
@@ -175,6 +176,51 @@ def test_process_syslog_batch_uses_configured_client_name(monkeypatch):
     by_id = {a["agent_id"]: a for a in agents}
     assert "agent-linux-wazuh" in by_id
     assert by_id["agent-linux-wazuh"]["hostname"] == "wazuh-srv"
+
+
+def _wazuh_line(agent_id: str, agent_name: str, agent_ip: str, description: str) -> str:
+    alert = {
+        "timestamp": "2026-07-08T09:00:00.000-0600",
+        "rule": {"level": 5, "description": description, "id": "61138", "groups": ["windows"]},
+        "agent": {"id": agent_id, "name": agent_name, "ip": agent_ip},
+        "manager": {"name": "wazuh-srv-Virtual-Machine"},
+        "full_log": description,
+    }
+    return f"<132>Jul  8 09:00:00 wazuh-srv-Virtual-Machine ossec: {json.dumps(alert)}"
+
+
+def test_process_syslog_batch_attributes_remote_wazuh_agent_separately_from_manager():
+    # Un manager de Wazuh reenvía por syslog tanto sus propias alertas
+    # (agent.id "000") como las de cualquier endpoint remoto que tenga
+    # enrolado (ej. un Windows) -- ambas llegan del mismo remitente UDP
+    # (el manager), no deben mezclarse bajo un solo agente SENTINEL.
+    packets = _pkts([
+        _wazuh_line("000", "wazuh-srv-Virtual-Machine", "127.0.0.1", "Dpkg installed"),
+        _wazuh_line("005", "DESKTOP-GULVC64", "172.16.134.150", "New Windows Service Created"),
+        _wazuh_line("005", "DESKTOP-GULVC64", "172.16.134.150", "Inconsistent system shutdown"),
+    ])
+
+    asyncio.run(process_syslog_batch(packets))
+
+    agents = {a["agent_id"]: a for a in storage.query_agents(environment="real_vm")}
+    assert agents[TEST_SENDER_AGENT_ID]["event_count"] == 1  # el manager, agente autogenerado por IP
+    assert agents["agent-wazuh-005"]["event_count"] == 2
+    assert agents["agent-wazuh-005"]["hostname"] == "DESKTOP-GULVC64"
+
+
+def test_process_syslog_batch_uses_configured_wazuh_agent_identity(monkeypatch):
+    monkeypatch.setenv(
+        "SENTINEL_WAZUH_AGENTS",
+        json.dumps({"005": {"agent_id": "agent-windows-wazuh", "hostname": "DESKTOP-GULVC64", "os": "Windows 11"}}),
+    )
+
+    asyncio.run(process_syslog_batch(_pkts([
+        _wazuh_line("005", "DESKTOP-GULVC64", "172.16.134.150", "New Windows Service Created"),
+    ])))
+
+    agents = {a["agent_id"]: a for a in storage.query_agents(environment="real_vm")}
+    assert "agent-windows-wazuh" in agents
+    assert agents["agent-windows-wazuh"]["os"] == "Windows 11"
 
 
 def test_process_syslog_batch_wazuh_fim_alert_triggers_critical_alert():

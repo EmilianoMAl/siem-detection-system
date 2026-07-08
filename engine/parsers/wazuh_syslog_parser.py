@@ -51,6 +51,20 @@ def parse_line(line: str) -> LogEvent | None:
     syscheck = alert.get("syscheck")
     is_fim = bool(syscheck) or "syscheck" in rule.get("groups", [])
 
+    # El manager de Wazuh reenvía por syslog tanto sus propias alertas
+    # locales (agent.id "000", agent.name = el propio manager) como las
+    # de cualquier agente remoto que tenga enrolado (ej. un endpoint de
+    # Windows con Wazuh agent instalado) -- el remitente del paquete
+    # UDP es siempre el manager, así que agent.id/agent.name/agent.ip
+    # es la única forma de saber a qué host pertenece la alerta de
+    # verdad. Se guarda en metadata para que process_syslog_batch
+    # pueda atribuir cada alerta a un agente SENTINEL distinto en vez
+    # de agrupar todo bajo el manager.
+    wazuh_agent = alert.get("agent") or {}
+    wazuh_agent_id = wazuh_agent.get("id")
+    wazuh_agent_name = wazuh_agent.get("name")
+    wazuh_agent_ip = wazuh_agent.get("ip")
+
     if is_fim:
         syscheck = syscheck or {}
         action = SYSCHECK_EVENT_TO_ACTION.get(syscheck.get("event"), "modified")
@@ -76,10 +90,14 @@ def parse_line(line: str) -> LogEvent | None:
             "full_log": alert.get("full_log"),
         }
 
+    metadata["wazuh_agent_id"] = wazuh_agent_id
+    metadata["wazuh_agent_name"] = wazuh_agent_name
+    metadata["wazuh_agent_ip"] = wazuh_agent_ip
+
     return LogEvent(
         raw_line=line,
         timestamp=alert.get("timestamp") or match.group("timestamp"),
-        hostname=match.group("hostname"),
+        hostname=wazuh_agent_name or match.group("hostname"),
         service="ossec",
         pid=None,
         event_type=event_type,

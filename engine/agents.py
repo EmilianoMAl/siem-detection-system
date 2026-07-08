@@ -154,6 +154,55 @@ def resolve_syslog_agent(sender_ip: str, claimed_hostname: str | None = None) ->
     )
 
 
+def _load_wazuh_agents() -> dict:
+    """
+    Parsea SENTINEL_WAZUH_AGENTS (JSON: wazuh_agent_id -> {agent_id,
+    hostname, os}) -- mismo patrón que SENTINEL_SYSLOG_CLIENTS pero
+    para endpoints enrolados en el Wazuh manager (ej. un Windows con
+    el agente de Wazuh instalado), que no se pueden identificar por IP
+    porque todos llegan por el mismo remitente UDP (el manager).
+    """
+    raw = os.environ.get("SENTINEL_WAZUH_AGENTS")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("SENTINEL_WAZUH_AGENTS no es JSON válido -- se ignora")
+        return {}
+
+
+def resolve_wazuh_agent(
+    sender_ip: str,
+    claimed_hostname: str | None,
+    wazuh_agent_id: str | None,
+    wazuh_agent_name: str | None,
+    wazuh_agent_ip: str | None,
+) -> Agent:
+    """
+    Resuelve a qué agente SENTINEL pertenece una alerta de Wazuh.
+    wazuh_agent_id "000" (o ausente) es el propio manager -- se
+    resuelve igual que cualquier otro syslog, por su IP real (mantiene
+    la identidad existente, ej. agent-linux-wazuh). Cualquier otro id
+    es un endpoint remoto de verdad enrolado en ese manager (ej. un
+    Windows con el agente de Wazuh) -- todos comparten el mismo
+    remitente UDP (el manager), así que se identifican por
+    wazuh_agent_id, no por IP.
+    """
+    if not wazuh_agent_id or wazuh_agent_id == "000":
+        return resolve_syslog_agent(sender_ip, claimed_hostname)
+
+    cfg = _load_wazuh_agents().get(wazuh_agent_id, {})
+    return Agent(
+        agent_id=cfg.get("agent_id") or f"agent-wazuh-{wazuh_agent_id}",
+        hostname=cfg.get("hostname") or wazuh_agent_name or f"wazuh-agent-{wazuh_agent_id}",
+        ip_address=wazuh_agent_ip or "",
+        os=cfg.get("os") or "Unknown",
+        log_sources=["wazuh"],
+        environment="real_vm",
+    )
+
+
 def find_known_agent(agent_id: str) -> Agent | None:
     """Busca por id entre los agentes simulados, el agente real o el de syslog."""
     agent = get_agent(agent_id)

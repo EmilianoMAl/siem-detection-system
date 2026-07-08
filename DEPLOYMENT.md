@@ -340,7 +340,27 @@ tengas la IP real para que se vea con un nombre legible.
 > quitar solo por compatibilidad con datos ya guardados bajo
 > `agent-syslog-fw`.
 
-**12.3 — Configura el SonicWall (o lo que mande los logs)** para
+**12.3 — Endpoints enrolados en un Wazuh manager (ej. un Windows con
+el agente de Wazuh instalado)**, en vez de una IP propia: un manager de
+Wazuh reenvía por syslog tanto sus propias alertas como las de
+cualquier agente que tenga enrolado, y todo llega al puerto 514/5514
+con el **mismo remitente UDP** (el manager) — identificarlos por IP no
+sirve. SENTINEL ya lee el campo `agent.id` que trae cada alerta de
+Wazuh para separarlos automáticamente (`agent-wazuh-<id>`, con el
+hostname que reporta Wazuh); si quieres un `agent_id`/hostname/os más
+legible que el autogenerado, usa `SENTINEL_WAZUH_AGENTS` (JSON:
+wazuh_agent_id → identidad):
+```bash
+# En .env (una sola línea, sin espacios extra):
+SENTINEL_WAZUH_AGENTS={"005":{"agent_id":"agent-windows-wazuh","hostname":"DESKTOP-GULVC64","os":"Windows 11"}}
+```
+El `wazuh_agent_id` es el que le asignó el propio manager al enrolarlo
+(`sudo /var/ossec/bin/manage_agents -l` en la VM del manager lista
+todos los agentes enrolados con su id). No confundir con
+`SENTINEL_SYSLOG_CLIENTS` — esa es por IP y sigue usándose para
+identificar al manager mismo (`agent.id` "000").
+
+**12.4 — Configura el SonicWall (o lo que mande los logs)** para
 enviar syslog a `<ip-publica-de-esta-VM>:514` sobre UDP — esto se hace
 del lado del firewall/dispositivo, no en esta VM. Para una VM Linux con
 `rsyslog`, en esa otra VM:
@@ -353,7 +373,7 @@ sudo systemctl restart rsyslog
 (el `@` simple es UDP; `*.*` manda todo lo que ese sistema logea —
 se puede acotar a `auth,authpriv.*` para solo intentos de login).
 
-**12.4 — Verifica que esté llegando**:
+**12.5 — Verifica que esté llegando**:
 ```bash
 docker compose logs -f api | grep -i syslog
 ```
@@ -363,7 +383,7 @@ a "VM real" y usa el selector "Agente" para ver los datos de cada
 cliente por separado. La página "Events" muestra el detalle completo
 de cada evento (no solo los que dispararon una alerta).
 
-**12.5 — Puerto extra (5514/UDP)**. El receptor de syslog también
+**12.6 — Puerto extra (5514/UDP)**. El receptor de syslog también
 escucha en el puerto 5514 por default (útil para separar una fuente
 nueva sin tocar la que ya funciona en el 514, o para pruebas) — ambos
 comparten el mismo procesamiento, no hace falta configurar nada nuevo
@@ -374,7 +394,7 @@ el firewall igual que el 514:
 sudo ufw allow from <CIDR_RED_TRABAJO> to any port 5514 proto udp
 ```
 Y en la **OCI Security List**, la misma regla de ingreso que el 514
-pero con puerto 5514. Verifica igual que en 12.4.
+pero con puerto 5514. Verifica igual que en 12.5.
 
 ---
 

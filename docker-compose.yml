@@ -34,6 +34,12 @@ services:
       # queda como su propio agente en vez de mezclarse todos bajo uno
       # solo. Ver DEPLOYMENT.md.
       - SENTINEL_SYSLOG_CLIENTS=${SENTINEL_SYSLOG_CLIENTS:-}
+      # JSON: wazuh_agent_id (el que le asigna el propio Wazuh manager
+      # al enrolarlo) -> {agent_id, hostname, os} -- para endpoints
+      # enrolados en un manager de Wazuh (ej. un Windows), que no se
+      # pueden identificar por IP porque comparten remitente UDP con
+      # el manager. Ver DEPLOYMENT.md 12.3.
+      - SENTINEL_WAZUH_AGENTS=${SENTINEL_WAZUH_AGENTS:-}
     restart: unless-stopped
 
   dashboard:

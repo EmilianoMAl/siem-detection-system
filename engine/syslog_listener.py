@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 
-from engine.agents import Agent, resolve_syslog_agent
+from engine.agents import Agent, resolve_syslog_agent, resolve_wazuh_agent
 from engine.parsers import auth_parser, web_parser, sonicwall_parser, wazuh_syslog_parser, generic_syslog_parser
 from engine.pipeline import ingest_lines_multi
 from engine.detectors.rules import DetectionEngine
@@ -81,11 +81,31 @@ async def process_syslog_batch(packets: list[tuple[str, str]]) -> None:
     # quede con un nombre legible en vez de solo la IP.
     resolved_agents: dict[str, Agent] = {}
 
+    def _agent_key(sender_ip: str, event) -> str:
+        # Un manager de Wazuh reenvía por syslog tanto sus propias
+        # alertas locales como las de cualquier endpoint remoto que
+        # tenga enrolado (ej. un Windows) -- todas comparten el mismo
+        # remitente UDP (el manager), así que agrupar solo por
+        # sender_ip las mezclaría todas bajo un único agente. Se
+        # desambigua por wazuh_agent_id cuando está presente.
+        wazuh_agent_id = (event.metadata or {}).get("wazuh_agent_id")
+        if event.log_source in ("wazuh", "fim") and wazuh_agent_id and wazuh_agent_id != "000":
+            return f"wazuh:{wazuh_agent_id}"
+        return sender_ip
+
     def _resolve(sender_ip, event):
-        agent = resolved_agents.get(sender_ip)
+        key = _agent_key(sender_ip, event)
+        agent = resolved_agents.get(key)
         if agent is None:
-            agent = resolve_syslog_agent(sender_ip, claimed_hostname=event.hostname)
-            resolved_agents[sender_ip] = agent
+            wazuh_agent_id = (event.metadata or {}).get("wazuh_agent_id")
+            if event.log_source in ("wazuh", "fim") and wazuh_agent_id and wazuh_agent_id != "000":
+                agent = resolve_wazuh_agent(
+                    sender_ip, event.hostname, wazuh_agent_id,
+                    event.metadata.get("wazuh_agent_name"), event.metadata.get("wazuh_agent_ip"),
+                )
+            else:
+                agent = resolve_syslog_agent(sender_ip, claimed_hostname=event.hostname)
+            resolved_agents[key] = agent
         return agent
 
     items = [(line, {"sender_ip": sender_ip}) for line, sender_ip in packets]
