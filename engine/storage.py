@@ -403,6 +403,43 @@ def query_agents(environment: str = "ALL") -> list[dict]:
     return rows
 
 
+def query_recent_events_for_detection(
+    log_sources: tuple[str, ...], window_seconds: int, environment: str = "real_vm",
+) -> list[LogEvent]:
+    """
+    Reconstruye LogEvents desde la BD para una ventana rodante de los
+    últimos `window_seconds` (por created_at, el reloj propio de
+    SENTINEL). La usan las reglas de correlación con estado (brute
+    force, password spraying, recon scan, etc.) para evaluar su umbral
+    contra una ventana de tiempo real en vez de solo lo que llegó en el
+    último lote de ingesta -- así detectan igual un ataque que se arma
+    lento a lo largo de varios lotes, sin importar qué tan seguido corre
+    el flush de syslog (ver SYSLOG_FLUSH_SECONDS).
+    """
+    conn = get_connection()
+    env_clause, env_params = _environment_clause(environment)
+    placeholders = ",".join("?" for _ in log_sources)
+    rows = conn.execute(f"""
+        SELECT timestamp, hostname, agent_id, log_source, service, event_type,
+               username, source_ip, source_port, command, metadata, raw_line, environment
+        FROM events
+        WHERE log_source IN ({placeholders})
+          AND created_at >= datetime('now', ?) {env_clause}
+    """, (*log_sources, f"-{window_seconds} seconds", *env_params)).fetchall()
+    conn.close()
+
+    return [
+        LogEvent(
+            raw_line=row["raw_line"], timestamp=row["timestamp"], hostname=row["hostname"],
+            service=row["service"], pid=None, event_type=row["event_type"], username=row["username"],
+            source_ip=row["source_ip"], source_port=row["source_port"], command=row["command"],
+            agent_id=row["agent_id"], log_source=row["log_source"], environment=row["environment"],
+            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
+        )
+        for row in rows
+    ]
+
+
 def query_events(
     environment: str = "ALL", agent_id: str = "ALL", log_source: str = "ALL",
     time_range: str = "all", start: Optional[str] = None, end: Optional[str] = None,

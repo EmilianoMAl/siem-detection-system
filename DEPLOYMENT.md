@@ -377,8 +377,10 @@ se puede acotar a `auth,authpriv.*` para solo intentos de login).
 ```bash
 docker compose logs -f api | grep -i syslog
 ```
-Las líneas se agrupan y procesan cada 15 segundos (igual que el agente
-real agrupa por lotes) — en el dashboard, cambia el selector "Workspace"
+Las líneas se agrupan y procesan cada 2 segundos (solo para eficiencia
+de agrupado, no define la ventana de correlación de las reglas con
+estado -- ver el comentario de SYSLOG_FLUSH_SECONDS en
+engine/syslog_listener.py) — en el dashboard, cambia el selector "Workspace"
 a "VM real" y usa el selector "Agente" para ver los datos de cada
 cliente por separado. La página "Events" muestra el detalle completo
 de cada evento (no solo los que dispararon una alerta).

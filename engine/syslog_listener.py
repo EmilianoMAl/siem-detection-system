@@ -1,22 +1,66 @@
 import asyncio
 import logging
 import re
+import time
 
 from engine.agents import Agent, resolve_syslog_agent, resolve_wazuh_agent
 from engine.parsers import auth_parser, web_parser, sonicwall_parser, wazuh_syslog_parser, generic_syslog_parser
 from engine.pipeline import ingest_lines_multi
-from engine.detectors.rules import DetectionEngine
-from engine.storage import get_max_alert_counter, insert_events, insert_alerts, touch_agent, register_agents
+from engine.detectors.rules import DetectionEngine, Alert
+from engine.storage import (
+    get_max_alert_counter, insert_events, insert_alerts, touch_agent, register_agents,
+    query_recent_events_for_detection,
+)
 
 logger = logging.getLogger(__name__)
 
 # Las líneas que llegan por UDP se acumulan y se procesan en lote cada
-# tantos segundos -- igual que agent/ship_logs.py agrupa varias líneas
-# por POST cada 30s. Sin este agrupado, cada paquete se evaluaría solo
-# contra sí mismo y una regla tipo "N rechazos en poco tiempo" nunca
-# podría disparar (nunca habría más de 1 evento por corrida del motor
-# de detección).
-SYSLOG_FLUSH_SECONDS = 15
+# tantos segundos, solo para agrupar eficientemente lo que haya llegado
+# casi al mismo tiempo -- YA NO define la ventana de correlación de las
+# reglas con estado (ver STATEFUL_RULES / query_recent_events_for_detection
+# más abajo), así que se puede mantener bajo sin perder alertas por
+# umbral. Antes este valor SÍ era la ventana de correlación completa
+# (por eso estaba en 15s) -- se dejó así de bajo a propósito para que el
+# tiempo entre "algo pasa en la VM" y "aparece en el dashboard" sea de
+# unos segundos, no de hasta 15+.
+SYSLOG_FLUSH_SECONDS = 2
+
+# Ventana rodante (por created_at, el reloj propio de SENTINEL) contra
+# la que se evalúan las reglas con estado -- independiente de qué tan
+# seguido corre el flush de arriba. 5 minutos es suficiente para que un
+# brute force / password spraying / recon scan típico se vea completo
+# aunque el atacante reparta los intentos en varios lotes de 2s.
+STATEFUL_WINDOW_SECONDS = 300
+
+# Sin esto, una condición que se sigue cumpliendo (ej. un atacante que
+# sigue mandando intentos fallidos) volvería a alertar en cada tick de
+# SYSLOG_FLUSH_SECONDS mientras dure -- antes pasaba cada 15s, ahora con
+# un flush de 2s sería 7x más ruido para el mismo ataque. Se suprime
+# re-alertar la misma (regla, IP/usuario) dentro de este cooldown.
+# Limitación conocida: si la misma combinación (regla, IP/usuario) ya
+# alertada sigue dentro de STATEFUL_WINDOW_SECONDS cuando el cooldown
+# expira, puede volver a dispararse aunque el evento que la originó ya
+# no sea nuevo -- deduplicar por evento puntual (no solo por IP/usuario)
+# requeriría trackear qué eventos ya contribuyeron a una alerta, fuera
+# de alcance por ahora. Prioriza no perder alertas sobre no repetir
+# alguna ocasional.
+ALERT_COOLDOWN_SECONDS = 120
+_last_alerted: dict[tuple[str, str], float] = {}
+
+
+def reset_alert_cooldowns() -> None:
+    """Limpia el cooldown de supresión -- usado por los tests para aislarse entre corridas."""
+    _last_alerted.clear()
+
+
+def _is_suppressed(alert: Alert) -> bool:
+    key = (alert.rule_name, alert.source_ip or alert.username or alert.hostname or "")
+    now = time.monotonic()
+    last = _last_alerted.get(key)
+    if last is not None and now - last < ALERT_COOLDOWN_SECONDS:
+        return True
+    _last_alerted[key] = now
+    return False
 
 # El emisor de syslog puede ser cualquier cosa: un cliente Linux con
 # rsyslog reenviando su propio auth.log (formato RFC3164 estándar:
@@ -117,10 +161,41 @@ async def process_syslog_batch(packets: list[tuple[str, str]]) -> None:
 
     register_agents(list(resolved_agents.values()))
 
-    engine = DetectionEngine(start_counter=get_max_alert_counter())
-    alerts = engine.run_all_rules(events)
-
+    # Se inserta ANTES de correr las reglas con estado -- necesitan ver
+    # estos eventos recién llegados también dentro de su ventana rodante
+    # (query_recent_events_for_detection lee de la BD, no de `events`).
     insert_events(events)
+
+    engine = DetectionEngine(start_counter=get_max_alert_counter())
+
+    # Reglas sin estado: solo necesitan los eventos que acaban de llegar,
+    # no dependen de historial -- se evalúan de inmediato, sin ir a la BD.
+    alerts = []
+    alerts.extend(engine.detect_fim_critical_change(events))
+    alerts.extend(engine.detect_web_attacks(events))
+    alerts.extend(engine.detect_suspicious_commands(events))
+    alerts.extend(engine.detect_account_creation(events))
+    alerts.extend(engine.detect_wazuh_promoted_alert(events))
+
+    # Reglas con estado: necesitan ver un historial, no solo este lote
+    # -- se re-evalúan contra una ventana rodante en la BD, solo para
+    # las fuentes que de verdad llegaron en este lote (evita consultas
+    # de más en cada tick de 2s cuando no llegó nada relevante).
+    sources_present = {e.log_source for e in events}
+    if "ssh" in sources_present:
+        window = query_recent_events_for_detection(("ssh",), STATEFUL_WINDOW_SECONDS)
+        alerts.extend(engine.detect_brute_force(window))
+        alerts.extend(engine.detect_password_spraying(window))
+        alerts.extend(engine.detect_successful_login_after_failures(window))
+    if "web" in sources_present:
+        window = query_recent_events_for_detection(("web",), STATEFUL_WINDOW_SECONDS)
+        alerts.extend(engine.detect_recon_scan(window))
+    if "sonicwall" in sources_present:
+        window = query_recent_events_for_detection(("sonicwall",), STATEFUL_WINDOW_SECONDS)
+        alerts.extend(engine.detect_sonicwall_repeated_denials(window))
+
+    alerts = [a for a in alerts if not _is_suppressed(a)]
+
     insert_alerts(alerts)
     for agent in resolved_agents.values():
         touch_agent(agent.agent_id)

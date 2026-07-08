@@ -4,7 +4,7 @@ import json
 import pytest
 
 from engine import storage
-from engine.syslog_listener import process_syslog_batch
+from engine.syslog_listener import process_syslog_batch, reset_alert_cooldowns
 
 LINE_LOGIN_DENIED = (
     'id=firewall sn=18C24173CD98 time="2026-06-30 15:29:31 UTC" fw=201.151.192.156 '
@@ -40,6 +40,7 @@ def isolated_db(tmp_path, monkeypatch):
     monkeypatch.delenv("SENTINEL_SYSLOG_CLIENTS", raising=False)
     monkeypatch.delenv("SENTINEL_WAZUH_AGENTS", raising=False)
     storage.initialize_db()
+    reset_alert_cooldowns()
     yield
 
 
@@ -95,6 +96,30 @@ def test_process_syslog_batch_triggers_ssh_brute_force_on_forwarded_auth_log():
 
     alerts = storage.query_alerts(environment="real_vm")
     assert any(a["rule_name"] == "SSH_BRUTE_FORCE" for a in alerts)
+
+
+def test_process_syslog_batch_detects_brute_force_spread_across_multiple_batches():
+    # Antes, cada lote solo se evaluaba contra sí mismo -- un ataque
+    # repartido en dos lotes de 15s nunca llegaba al umbral en ninguno
+    # de los dos por separado. Ahora las reglas con estado se evalúan
+    # contra una ventana rodante en la BD, así que sí se detecta.
+    asyncio.run(process_syslog_batch(_pkts([LINE_SSH_FAILED_PASSWORD] * 3)))
+    alerts_after_first = storage.query_alerts(environment="real_vm")
+    assert not any(a["rule_name"] == "SSH_BRUTE_FORCE" for a in alerts_after_first)
+
+    asyncio.run(process_syslog_batch(_pkts([LINE_SSH_FAILED_PASSWORD] * 3)))
+    alerts_after_second = storage.query_alerts(environment="real_vm")
+    assert any(a["rule_name"] == "SSH_BRUTE_FORCE" for a in alerts_after_second)
+
+
+def test_process_syslog_batch_suppresses_repeat_alert_within_cooldown():
+    # Un atacante que sigue mandando intentos no debe generar una
+    # alerta nueva en cada lote mientras dure el cooldown.
+    asyncio.run(process_syslog_batch(_pkts([LINE_SSH_FAILED_PASSWORD] * 6)))
+    asyncio.run(process_syslog_batch(_pkts([LINE_SSH_FAILED_PASSWORD] * 6)))
+
+    alerts = [a for a in storage.query_alerts(environment="real_vm") if a["rule_name"] == "SSH_BRUTE_FORCE"]
+    assert len(alerts) == 1
 
 
 def test_process_syslog_batch_falls_back_to_generic_syslog():
