@@ -28,10 +28,12 @@ MITRE_REFERENCE = [
     ("Execution", "T1059", "Command and Scripting Interpreter"),
     ("Execution", "T1203", "Exploitation for Client Execution"),
     ("Execution", "T1053", "Scheduled Task/Job"),
+    ("Execution", "T1053.005", "Scheduled Task"),
 
     # Persistence
     ("Persistence", "T1098", "Account Manipulation"),
     ("Persistence", "T1543", "Create or Modify System Process"),
+    ("Persistence", "T1543.003", "Windows Service"),
     ("Persistence", "T1136", "Create Account"),
     ("Persistence", "T1554", "Compromise Client Software Binary"),
 

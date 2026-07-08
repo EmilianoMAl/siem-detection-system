@@ -583,6 +583,152 @@ class DetectionEngine:
         return alerts
 
     # ------------------------------------------------------------------
+    # WINDOWS (nativo -- sin depender de Wazuh ni de ningún EDR de
+    # terceros. Cualquier Windows que mande su Event Log por syslog vía
+    # un forwarder como NXLog cae aquí -- ver engine/parsers/
+    # windows_eventlog_parser.py)
+    # ------------------------------------------------------------------
+
+    def detect_windows_brute_force(self, events: list[LogEvent]) -> list[Alert]:
+        """
+        Regla: Detecta brute force contra logins de Windows -- mismo
+        esquema que SSH_BRUTE_FORCE. Se agrupa por IP de origen cuando
+        el logon es de red/RDP; si es local (en la consola, sin IP),
+        se agrupa por usuario objetivo en su lugar.
+
+        MITRE ATT&CK: T1110 - Brute Force
+        """
+        cfg = self.config["windows_brute_force"]
+        alerts = []
+        failed_by_key = defaultdict(list)
+
+        for event in events:
+            if event.log_source != "windows" or event.event_type != "logon_failed":
+                continue
+            key = event.source_ip or event.username or "unknown"
+            failed_by_key[key].append(event)
+
+        for key, failed_events in failed_by_key.items():
+            if len(failed_events) < cfg["fail_threshold"]:
+                continue
+            usernames = list(set(e.username for e in failed_events if e.username))
+            severity = "CRITICAL" if len(failed_events) >= cfg["critical_threshold"] else "HIGH"
+            is_local = failed_events[0].source_ip is None
+            alert = Alert(
+                alert_id=self._new_alert_id(),
+                rule_name="WINDOWS_BRUTE_FORCE",
+                severity=severity,
+                description=(
+                    f"Brute force en Windows ({'logon local' if is_local else f'desde {key}'}). "
+                    f"{len(failed_events)} intentos fallidos. "
+                    f"Usuarios objetivo: {', '.join(usernames[:5]) or 'N/D'}"
+                ),
+                source_ip=failed_events[0].source_ip,
+                username=usernames[0] if usernames else None,
+                hostname=failed_events[0].hostname,
+                evidence=[e.raw_line for e in failed_events[:5]],
+                recommendation=(
+                    "Verificar quién tiene acceso físico/RDP a la consola de este host."
+                    if is_local else f"Bloquear IP {key} en el firewall."
+                ),
+                mitre_technique="T1110 - Brute Force",
+                environment=failed_events[0].environment,
+            )
+            alerts.append(alert)
+            logger.warning(f"🚨 [{severity}] WINDOWS_BRUTE_FORCE | key={key} | intentos={len(failed_events)}")
+
+        return alerts
+
+    def detect_windows_login_after_failures(self, events: list[LogEvent]) -> list[Alert]:
+        """
+        Regla: Login exitoso en Windows desde una IP/usuario que tuvo
+        fallos previos -- mismo patrón que LOGIN_AFTER_FAILURES de SSH.
+
+        MITRE ATT&CK: T1078 - Valid Accounts
+        """
+        alerts = []
+        failed_keys = set()
+
+        for event in events:
+            if event.log_source == "windows" and event.event_type == "logon_failed":
+                failed_keys.add(event.source_ip or event.username)
+
+        for event in events:
+            if event.log_source != "windows" or event.event_type != "logon_success":
+                continue
+            key = event.source_ip or event.username
+            if not key or key not in failed_keys:
+                continue
+            alert = Alert(
+                alert_id=self._new_alert_id(),
+                rule_name="WINDOWS_LOGIN_AFTER_FAILURES",
+                severity="CRITICAL",
+                description=(
+                    f"Login EXITOSO en Windows ({event.hostname}) tras intentos fallidos previos. "
+                    f"Usuario: {event.username}."
+                ),
+                source_ip=event.source_ip,
+                username=event.username,
+                hostname=event.hostname,
+                evidence=[event.raw_line],
+                recommendation=(
+                    f"Verificar con {event.username} si reconoce este acceso. "
+                    f"Considerar forzar cambio de contraseña."
+                ),
+                mitre_technique="T1078 - Valid Accounts",
+                environment=event.environment,
+            )
+            alerts.append(alert)
+            logger.critical(f"🔴 [CRITICAL] WINDOWS_LOGIN_AFTER_FAILURES | user={event.username}")
+
+        return alerts
+
+    # (regla, técnica MITRE, severidad) por event_type -- eventos
+    # puntuales de alto valor del Event Log que no necesitan
+    # correlación, se promueven a alerta directo, uno por evento.
+    _WINDOWS_SINGLE_EVENT_RULES = {
+        "user_created":                   ("WINDOWS_ACCOUNT_CREATED", "T1136 - Create Account", "HIGH"),
+        "user_added_to_privileged_group": ("WINDOWS_PRIVILEGED_GROUP_CHANGE", "T1098 - Account Manipulation", "CRITICAL"),
+        "service_created":                ("WINDOWS_SUSPICIOUS_SERVICE", "T1543.003 - Windows Service", "MEDIUM"),
+        "scheduled_task_created":         ("WINDOWS_SCHEDULED_TASK_CREATED", "T1053.005 - Scheduled Task", "MEDIUM"),
+    }
+
+    def detect_windows_account_events(self, events: list[LogEvent]) -> list[Alert]:
+        """
+        Regla: Promueve eventos puntuales de alto valor del Event Log de
+        Windows -- creación de cuenta, alta a grupo privilegiado,
+        creación de servicio, tarea programada. Cada uno es
+        significativo por sí solo, no necesita correlación con otros.
+        """
+        alerts = []
+
+        for event in events:
+            if event.log_source != "windows" or event.event_type not in self._WINDOWS_SINGLE_EVENT_RULES:
+                continue
+            rule_name, technique, severity = self._WINDOWS_SINGLE_EVENT_RULES[event.event_type]
+            actor = event.username or event.metadata.get("subject_user_name") or "N/D"
+            alert = Alert(
+                alert_id=self._new_alert_id(),
+                rule_name=rule_name,
+                severity=severity,
+                description=(
+                    f"[{event.hostname}] {event.metadata.get('message') or event.event_type} "
+                    f"(usuario: {actor})"
+                ),
+                source_ip=event.source_ip,
+                username=event.username,
+                hostname=event.hostname,
+                evidence=[event.raw_line],
+                recommendation=f"Confirmar si esta acción en {event.hostname} fue autorizada por {actor}.",
+                mitre_technique=technique,
+                environment=event.environment,
+            )
+            alerts.append(alert)
+            logger.warning(f"🚨 [{severity}] {rule_name} | host={event.hostname}")
+
+        return alerts
+
+    # ------------------------------------------------------------------
 
     def run_all_rules(self, events: list[LogEvent]) -> list[Alert]:
         """
@@ -603,6 +749,9 @@ class DetectionEngine:
         all_alerts.extend(self.detect_fim_critical_change(events))
         all_alerts.extend(self.detect_sonicwall_repeated_denials(events))
         all_alerts.extend(self.detect_wazuh_promoted_alert(events))
+        all_alerts.extend(self.detect_windows_brute_force(events))
+        all_alerts.extend(self.detect_windows_login_after_failures(events))
+        all_alerts.extend(self.detect_windows_account_events(events))
 
         severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
         all_alerts.sort(key=lambda a: severity_order.get(a.severity, 4))

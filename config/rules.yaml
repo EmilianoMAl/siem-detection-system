@@ -64,3 +64,7 @@ account_creation:
 wazuh_promoted_alert:
   high_level: 8       # nivel de Wazuh a partir del cual se promueve a alerta HIGH
   critical_level: 12  # y a partir de aquí, CRITICAL (semántica oficial de niveles de Wazuh)
+
+windows_brute_force:
+  fail_threshold: 5          # intentos fallidos (locales o de red) para disparar la alerta
+  critical_threshold: 20     # a partir de aquí la severidad sube a CRITICAL

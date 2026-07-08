@@ -271,3 +271,53 @@ def test_process_syslog_batch_wazuh_fim_alert_triggers_critical_alert():
     assert alerts[0]["rule_name"] == "FIM_CRITICAL_FILE_CHANGE"
     assert alerts[0]["severity"] == "CRITICAL"
     assert alerts[0]["mitre_technique"] == "T1554 - Compromise Client Software Binary"
+
+
+def _windows_line(record: dict, hostname: str = "DESKTOP-GULVC64") -> str:
+    return f"<134>Jul  8 12:00:00 {hostname} sentinel_winlog: {json.dumps(record)}"
+
+
+def test_process_syslog_batch_windows_service_created_triggers_alert_without_wazuh():
+    # Extremo a extremo: un forwarder de Windows (NXLog) manda un evento
+    # de creación de servicio -- se parsea nativo y dispara
+    # WINDOWS_SUSPICIOUS_SERVICE, sin Wazuh de por medio.
+    record = {
+        "EventID": 7045, "Channel": "System", "ServiceName": "EvilSvc",
+        "ImagePath": "C:\\evil.exe", "Message": "A service was installed.",
+    }
+    asyncio.run(process_syslog_batch(_pkts([_windows_line(record)])))
+
+    events = storage.query_event_types(environment="real_vm")
+    assert {e["event_type"] for e in events} == {"service_created"}
+
+    alerts = storage.query_alerts(environment="real_vm")
+    assert len(alerts) == 1
+    assert alerts[0]["rule_name"] == "WINDOWS_SUSPICIOUS_SERVICE"
+    assert alerts[0]["mitre_technique"] == "T1543.003 - Windows Service"
+
+
+def test_process_syslog_batch_windows_brute_force_spread_across_batches():
+    record = {"EventID": 4625, "Channel": "Security", "TargetUserName": "admin", "IpAddress": "203.0.113.9"}
+
+    asyncio.run(process_syslog_batch(_pkts([_windows_line(record)] * 3)))
+    assert not any(
+        a["rule_name"] == "WINDOWS_BRUTE_FORCE" for a in storage.query_alerts(environment="real_vm")
+    )
+
+    asyncio.run(process_syslog_batch(_pkts([_windows_line(record)] * 3)))
+    assert any(
+        a["rule_name"] == "WINDOWS_BRUTE_FORCE" for a in storage.query_alerts(environment="real_vm")
+    )
+
+
+def test_process_syslog_batch_windows_agent_identified_by_real_sender_ip():
+    # A diferencia de Wazuh (donde todo llega del manager), un forwarder
+    # de Windows manda directo -- el remitente del paquete SÍ es el
+    # host real, se resuelve como cualquier otro cliente de syslog.
+    monkeypatch_ip = "198.51.100.42"
+    record = {"EventID": 4624, "Channel": "Security", "TargetUserName": "deploy"}
+
+    asyncio.run(process_syslog_batch([(_windows_line(record), monkeypatch_ip)]))
+
+    agents = storage.query_agents(environment="real_vm")
+    assert f"agent-syslog-{monkeypatch_ip.replace('.', '-')}" in [a["agent_id"] for a in agents]

@@ -4,7 +4,10 @@ import re
 import time
 
 from engine.agents import Agent, resolve_syslog_agent, resolve_wazuh_agent
-from engine.parsers import auth_parser, web_parser, sonicwall_parser, wazuh_syslog_parser, generic_syslog_parser
+from engine.parsers import (
+    auth_parser, web_parser, sonicwall_parser, wazuh_syslog_parser,
+    windows_eventlog_parser, generic_syslog_parser,
+)
 from engine.pipeline import ingest_lines_multi
 from engine.detectors.rules import DetectionEngine, Alert
 from engine.storage import (
@@ -90,7 +93,8 @@ def _specific(parser):
 
 
 PARSER_CHAIN = [
-    _specific(wazuh_syslog_parser.parse_line),  # tag "ossec:" inconfundible, va primero
+    _specific(wazuh_syslog_parser.parse_line),        # tag "ossec:" inconfundible, va primero
+    _specific(windows_eventlog_parser.parse_line),    # tag "sentinel_winlog:" -- Windows sin Wazuh de por medio
     _specific(auth_parser.parse_line),
     _specific(web_parser.parse_line),
     _specific(sonicwall_parser.parse_line),
@@ -176,6 +180,7 @@ async def process_syslog_batch(packets: list[tuple[str, str]]) -> None:
     alerts.extend(engine.detect_suspicious_commands(events))
     alerts.extend(engine.detect_account_creation(events))
     alerts.extend(engine.detect_wazuh_promoted_alert(events))
+    alerts.extend(engine.detect_windows_account_events(events))
 
     # Reglas con estado: necesitan ver un historial, no solo este lote
     # -- se re-evalúan contra una ventana rodante en la BD, solo para
@@ -193,6 +198,10 @@ async def process_syslog_batch(packets: list[tuple[str, str]]) -> None:
     if "sonicwall" in sources_present:
         window = query_recent_events_for_detection(("sonicwall",), STATEFUL_WINDOW_SECONDS)
         alerts.extend(engine.detect_sonicwall_repeated_denials(window))
+    if "windows" in sources_present:
+        window = query_recent_events_for_detection(("windows",), STATEFUL_WINDOW_SECONDS)
+        alerts.extend(engine.detect_windows_brute_force(window))
+        alerts.extend(engine.detect_windows_login_after_failures(window))
 
     alerts = [a for a in alerts if not _is_suppressed(a)]
 

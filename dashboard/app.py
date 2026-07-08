@@ -155,7 +155,7 @@ with st.sidebar:
         label_visibility="collapsed"
     )
     source_filter = st.selectbox(
-        "Log Source", ["ALL", "SSH", "WEB", "FIM", "SONICWALL", "SYSLOG", "WAZUH"],
+        "Log Source", ["ALL", "SSH", "WEB", "FIM", "SONICWALL", "SYSLOG", "WAZUH", "WINDOWS"],
         label_visibility="collapsed"
     )
     time_range_label = st.selectbox(

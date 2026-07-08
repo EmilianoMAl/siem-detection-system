@@ -54,6 +54,10 @@ DEFAULT_RULES_CONFIG: dict[str, Any] = {
         "high_level": 8,
         "critical_level": 12,
     },
+    "windows_brute_force": {
+        "fail_threshold": 5,
+        "critical_threshold": 20,
+    },
 }
 
 

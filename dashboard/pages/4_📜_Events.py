@@ -36,7 +36,7 @@ with st.sidebar:
     st.markdown('<div class="section-label">Filters</div>', unsafe_allow_html=True)
     agent_id, _agent_hostname = agent_selector(api_client.get_agents(environment))
     log_source = st.selectbox(
-        "Log Source", ["ALL", "SSH", "WEB", "FIM", "SONICWALL", "SYSLOG", "WAZUH"],
+        "Log Source", ["ALL", "SSH", "WEB", "FIM", "SONICWALL", "SYSLOG", "WAZUH", "WINDOWS"],
         label_visibility="collapsed",
     )
     st.markdown("---")

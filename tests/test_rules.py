@@ -341,3 +341,127 @@ def test_wazuh_promoted_alert_severity_scales_with_level():
     alerts = engine.detect_wazuh_promoted_alert([event])
 
     assert alerts[0].severity == "CRITICAL"
+
+
+def test_windows_brute_force_triggers_above_threshold_grouped_by_ip():
+    events = [
+        make_event(
+            log_source="windows", event_type="logon_failed", username="admin",
+            command=None, source_ip="203.0.113.9",
+        )
+        for _ in range(6)
+    ]
+    engine = DetectionEngine()
+
+    alerts = engine.detect_windows_brute_force(events)
+
+    assert len(alerts) == 1
+    assert alerts[0].rule_name == "WINDOWS_BRUTE_FORCE"
+    assert alerts[0].mitre_technique == "T1110 - Brute Force"
+
+
+def test_windows_brute_force_local_logon_groups_by_username_not_ip():
+    # Sin IP (logon local en consola) -- se agrupa por usuario en vez de
+    # colapsar todos los logons locales bajo una "IP" compartida.
+    events = [
+        make_event(
+            log_source="windows", event_type="logon_failed", username="root",
+            command=None, source_ip=None,
+        )
+        for _ in range(6)
+    ]
+    engine = DetectionEngine()
+
+    alerts = engine.detect_windows_brute_force(events)
+
+    assert len(alerts) == 1
+    assert alerts[0].source_ip is None
+    assert alerts[0].username == "root"
+
+
+def test_windows_brute_force_below_threshold_does_not_trigger():
+    events = [
+        make_event(log_source="windows", event_type="logon_failed", username="admin", source_ip="1.2.3.4")
+        for _ in range(2)
+    ]
+    engine = DetectionEngine()
+
+    assert engine.detect_windows_brute_force(events) == []
+
+
+def test_windows_login_after_failures_triggers():
+    ip = "203.0.113.9"
+    events = [
+        make_event(log_source="windows", event_type="logon_failed", username="admin", source_ip=ip),
+        make_event(log_source="windows", event_type="logon_success", username="admin", source_ip=ip),
+    ]
+    engine = DetectionEngine()
+
+    alerts = engine.detect_windows_login_after_failures(events)
+
+    assert len(alerts) == 1
+    assert alerts[0].rule_name == "WINDOWS_LOGIN_AFTER_FAILURES"
+    assert alerts[0].mitre_technique == "T1078 - Valid Accounts"
+
+
+def test_windows_account_created_triggers():
+    event = make_event(
+        log_source="windows", event_type="user_created", username="backdoor",
+        command=None, source_ip=None, metadata={"message": "A user account was created."},
+    )
+    engine = DetectionEngine()
+
+    alerts = engine.detect_windows_account_events([event])
+
+    assert len(alerts) == 1
+    assert alerts[0].rule_name == "WINDOWS_ACCOUNT_CREATED"
+    assert alerts[0].mitre_technique == "T1136 - Create Account"
+
+
+def test_windows_privileged_group_change_triggers_critical():
+    event = make_event(
+        log_source="windows", event_type="user_added_to_privileged_group", username="deploy",
+        command=None, source_ip=None, metadata={"message": "Member added to Administrators."},
+    )
+    engine = DetectionEngine()
+
+    alerts = engine.detect_windows_account_events([event])
+
+    assert alerts[0].severity == "CRITICAL"
+    assert alerts[0].mitre_technique == "T1098 - Account Manipulation"
+
+
+def test_windows_service_created_triggers():
+    event = make_event(
+        log_source="windows", event_type="service_created", username=None,
+        command=None, source_ip=None, metadata={"message": "A service was installed.", "service_name": "EvilSvc"},
+    )
+    engine = DetectionEngine()
+
+    alerts = engine.detect_windows_account_events([event])
+
+    assert alerts[0].rule_name == "WINDOWS_SUSPICIOUS_SERVICE"
+    assert alerts[0].mitre_technique == "T1543.003 - Windows Service"
+
+
+def test_windows_scheduled_task_created_triggers():
+    event = make_event(
+        log_source="windows", event_type="scheduled_task_created", username=None,
+        command=None, source_ip=None, metadata={"message": "A scheduled task was created.", "task_name": "Evil"},
+    )
+    engine = DetectionEngine()
+
+    alerts = engine.detect_windows_account_events([event])
+
+    assert alerts[0].rule_name == "WINDOWS_SCHEDULED_TASK_CREATED"
+    assert alerts[0].mitre_technique == "T1053.005 - Scheduled Task"
+
+
+def test_windows_account_events_ignores_unrelated_event_types():
+    event = make_event(
+        log_source="windows", event_type="windows_event", username=None,
+        command=None, source_ip=None, metadata={"message": "noise"},
+    )
+    engine = DetectionEngine()
+
+    assert engine.detect_windows_account_events([event]) == []

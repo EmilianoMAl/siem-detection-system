@@ -38,7 +38,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-LogSource = Literal["ALL", "SSH", "WEB", "FIM", "SONICWALL", "SYSLOG", "WAZUH"]
+LogSource = Literal["ALL", "SSH", "WEB", "FIM", "SONICWALL", "SYSLOG", "WAZUH", "WINDOWS"]
 Severity = Literal["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"]
 Dataset = Literal["events", "alerts"]
 TimeRange = Literal["1h", "24h", "7d", "30d", "365d", "all", "custom"]
