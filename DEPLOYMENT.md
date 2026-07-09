@@ -400,7 +400,7 @@ pero con puerto 5514. Verifica igual que en 12.5.
 
 ---
 
-## 13. Windows sin depender de Wazuh (NXLog)
+## 13. Windows sin depender de Wazuh (agente propio en PowerShell)
 
 A diferencia de la sección 12.3 (un Windows enrolado en un manager de
 Wazuh), esto manda el Event Log de Windows **directo** a SENTINEL, sin
@@ -411,74 +411,50 @@ no Wazuh instalado. SENTINEL trae sus propias reglas nativas para esto
 `WINDOWS_SUSPICIOUS_SERVICE`, `WINDOWS_SCHEDULED_TASK_CREATED` — ver
 `engine/detectors/rules.py`), no depende del ruleset de ningún tercero.
 
-**13.1 — Instala NXLog Community Edition** en la VM de Windows:
-https://nxlog.co/products/nxlog-community-edition/download (el
-instalador `.msi`, siguiente-siguiente-instalar).
+> **Nota histórica**: la primera versión de esto usaba NXLog Community
+> Edition. En la práctica, su módulo `im_msvistalog` falló de forma
+> consistente con `EvtNext returned ERROR_INVALID_OPERATION` al leer
+> Security/System (un bug conocido de esa librería, no algo arreglable
+> desde la config) -- se reemplazó por `agent/windows/`, que usa
+> `Get-WinEvent` de PowerShell (misma API de Windows, otra vía que no
+> tiene ese bug) y no depende de instalar nada de terceros.
 
-**13.2 — Reemplaza `C:\Program Files\nxlog\conf\nxlog.conf`** con esto
-(ajusta `Host` si tu VM de SENTINEL cambia de IP):
-```
-define ROOT C:\Program Files\nxlog
-Moduledir %ROOT%\modules
-CacheDir %ROOT%\data
-Pidfile %ROOT%\data\nxlog.pid
-SpoolDir %ROOT%\data
-LogFile %ROOT%\data\nxlog.log
+**13.1 — Copia `agent/windows/` a la VM de Windows** (los 3 archivos:
+`Setup-SentinelWindowsAgent.ps1`, `Ship-WindowsEvents.ps1`,
+`Uninstall-SentinelWindowsAgent.ps1`, en la misma carpeta).
 
-<Extension _json>
-    Module xm_json
-</Extension>
-
-<Extension _syslog>
-    Module xm_syslog
-</Extension>
-
-<Input eventlog>
-    Module im_msvistalog
-    <QueryXML>
-        <QueryList>
-            <Query Id="0">
-                <Select Path="Security">
-                    *[System[(EventID=4624 or EventID=4625 or EventID=4720 or
-                    EventID=4726 or EventID=4728 or EventID=4732 or EventID=4698)]]
-                </Select>
-                <Select Path="System">
-                    *[System[(EventID=7045)]]
-                </Select>
-            </Query>
-        </QueryList>
-    </QueryXML>
-</Input>
-
-<Output sentinel>
-    Module om_udp
-    Host 163.192.142.214
-    Port 5514
-    Exec $Message = "sentinel_winlog: " + to_json();
-    Exec to_syslog_bsd();
-</Output>
-
-<Route r1>
-    Path eventlog => sentinel
-</Route>
-```
-El filtro de EventID es a propósito -- limita el ruido a los eventos
-que SENTINEL sabe interpretar (login fallido/exitoso, cuenta creada,
-alta a grupo privilegiado, tarea programada, servicio nuevo). Cualquier
-otro EventID que agregues igual se guarda (visible en Events como
-`windows_event`), solo que sin regla de detección todavía.
-
-**13.3 — Reinicia el servicio de NXLog**:
+**13.2 — Corre el instalador como Administrador**:
 ```powershell
-Restart-Service nxlog
+.\Setup-SentinelWindowsAgent.ps1 -SentinelHost 163.192.142.214 -SentinelPort 5514
 ```
+Esto activa la auditoría de Windows necesaria (`auditpol` — Logon,
+User Account Management, Security Group Management), copia el shipper
+a `C:\SENTINEL`, registra una Tarea Programada que lo corre como
+`SYSTEM` desde que arranca la VM (no depende de sesión de usuario
+abierta ni de dejar una ventana de PowerShell corriendo), y manda un
+evento de prueba al final.
 
-**13.4 — Verifica que esté llegando** — en el dashboard, Workspace
+**13.3 — Verifica que esté llegando** — en el dashboard, Workspace
 "VM real", Log Source "WINDOWS". El agente se autogenera por la IP real
 de la VM de Windows (`agent-syslog-<ip>`) — si quieres un nombre
-legible, agrégala a `SENTINEL_SYSLOG_CLIENTS` en `.env` (ver 12.2).
+legible, agrégala a `SENTINEL_SYSLOG_CLIENTS` en `.env` (ver 12.2). Si
+el evento de prueba (canal `SetupTest`) no aparece en ~10s, es casi
+siempre de red -- revisa que esta VM tenga salida UDP hacia
+`SentinelHost:SentinelPort` (firewall de Windows, NAT del hipervisor).
 
-**13.5 — Si el puerto 5514 sale de una red distinta a la que ya
+**13.4 — EventIDs que ya reconoce SENTINEL** (los demás igual se
+guardan en Events como `windows_event`, sin regla de detección
+todavía): `4624`/`4625` (logon exitoso/fallido), `4720`/`4726` (cuenta
+creada/borrada), `4728`/`4732` (alta a grupo privilegiado), `4698`
+(tarea programada -- requiere auditoría de "Object Access" adicional,
+no la activa el instalador por default por ser muy ruidosa), `7045`
+(servicio instalado, canal System, no requiere audit policy).
+
+**13.5 — Desinstalar**: `.\Uninstall-SentinelWindowsAgent.ps1` (borra
+la Tarea Programada y `C:\SENTINEL`; no revierte el audit policy, es
+configuración general de Windows, no algo exclusivo de SENTINEL).
+
+**13.6 — Si el puerto 5514 sale de una red distinta a la que ya
 autorizaste en 12.1/12.6**, agrega también su IP/CIDR ahí.
 
 ---
